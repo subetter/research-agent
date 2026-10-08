@@ -1,0 +1,18 @@
+{
+  "id": "comp-claude-gemini",
+  "family": "competitor",
+  "question": "比较 Claude 与 Gemini 的研究流程和交付方式",
+  "subjects": [
+    "Claude",
+    "Gemini"
+  ],
+  "dimensions": [
+    "研究流程",
+    "交付方式"
+  ],
+  "baseline_query": "Claude Gemini 研究流程 交付方式",
+  "page_subjects": {
+    "https://example.com/claude": "Claude",
+    "https://example.com/gemini-research": "Gemini"
+  }
+}

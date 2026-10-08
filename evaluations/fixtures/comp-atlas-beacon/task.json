@@ -1,0 +1,18 @@
+{
+  "id": "comp-atlas-beacon",
+  "family": "competitor",
+  "question": "比较 Atlas 与 Beacon 的部署方式和定价",
+  "subjects": [
+    "Atlas",
+    "Beacon"
+  ],
+  "dimensions": [
+    "部署方式",
+    "定价"
+  ],
+  "baseline_query": "Atlas Beacon 部署方式 定价",
+  "page_subjects": {
+    "https://example.com/atlas": "Atlas",
+    "https://example.com/beacon": "Beacon"
+  }
+}

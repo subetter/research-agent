@@ -1,6 +1,6 @@
 # Deep Research 工作台开发与评测计划
 
-> **目标计划。** 里程碑、`evaluations/`、Compose、MCP Server 目录与 24 题消融是规划，仓库里尚未建立评测集或这些目录，也不应为空目录占位。当前可运行范围与测试以 [README](../README.md) 和 `apps/api/tests` 为准。
+> **目标计划。** 24 题消融、人工标注对、Langfuse、Compose 与 MCP Server 仍是规划，不要为空目录占位。仓库现有 `evaluations/` 是 10 题固定快照离线评测（工作台图 vs 单次搜索基线 A），不是本文的 24 题方案。当前可运行范围与测试以 [README](../README.md)、`evaluations/README.md` 和 `apps/api/tests` 为准。
 
 实现按完整闭环、资料与扩展、工程可靠性、评测交付的顺序推进。每阶段产生可演示成果，技术加入以具体需求和验证结果为依据。以下为单人开发的参考安排，按里程碑验收，周数不构成交付承诺。
 

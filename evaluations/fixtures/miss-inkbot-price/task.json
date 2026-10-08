@@ -1,0 +1,18 @@
+{
+  "id": "miss-inkbot-price",
+  "family": "missing",
+  "question": "比较 NovaWriter 与 InkBot 的产品形态和定价，标出缺失信息",
+  "subjects": [
+    "NovaWriter",
+    "InkBot"
+  ],
+  "dimensions": [
+    "产品形态",
+    "定价"
+  ],
+  "baseline_query": "NovaWriter InkBot 产品形态 定价",
+  "page_subjects": {
+    "https://example.com/novawriter": "NovaWriter",
+    "https://example.com/inkbot": "InkBot"
+  }
+}

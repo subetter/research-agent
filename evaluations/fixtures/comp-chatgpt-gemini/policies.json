@@ -1,0 +1,102 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "ChatGPT",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "ChatGPT 是面向个人的对话式助手。"
+      },
+      {
+        "subject": "ChatGPT",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "ChatGPT Plus 为每月 20 美元。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Gemini 是谷歌的多模态助手。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "Gemini Advanced 随 Google One 高级套餐提供。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "ChatGPT",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "ChatGPT",
+        "dimension": "定价",
+        "verification": "fully"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "定价",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "ChatGPT",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "ChatGPT 是对话助手。"
+      },
+      {
+        "subject": "ChatGPT",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "ChatGPT 定价未在摘要中给出具体数字。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Gemini 是多模态助手。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "定价",
+        "kind": "unknown",
+        "text": "摘要未给出 Gemini 价格。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "ChatGPT",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "ChatGPT",
+        "dimension": "定价",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "定价",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

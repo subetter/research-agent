@@ -1,0 +1,53 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Helio",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Helio 是团队协作白板。"
+      },
+      {
+        "subject": "Helio",
+        "dimension": "部署方式",
+        "kind": "unknown",
+        "text": "部署页没有可读正文。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Helio",
+        "dimension": "产品形态",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Helio",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Helio 是协作白板。"
+      },
+      {
+        "subject": "Helio",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Helio 支持任意私有化部署。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Helio",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Helio",
+        "dimension": "部署方式",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

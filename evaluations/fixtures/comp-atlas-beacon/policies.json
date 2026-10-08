@@ -1,0 +1,102 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Atlas 支持云端与私有化部署。"
+      },
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "Atlas Team 为每席每月 40 美元。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Beacon 仅提供多租户云端。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "Beacon Pro 为每年 480 美元。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "部署方式",
+        "verification": "fully"
+      },
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "verification": "fully"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "verification": "fully"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "定价",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Atlas 可私有化。"
+      },
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "kind": "unknown",
+        "text": "摘要没有价格。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Beacon 只提供云端。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "定价",
+        "kind": "unknown",
+        "text": "摘要没有价格。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "部署方式",
+        "verification": "partial"
+      },
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "verification": "partial"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "定价",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

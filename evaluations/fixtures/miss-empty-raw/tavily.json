@@ -1,0 +1,54 @@
+{
+  "Helio 产品形态 官方": {
+    "results": [
+      {
+        "title": "Helio 简介",
+        "url": "https://example.com/helio",
+        "snippet": "Helio 是协作白板。",
+        "raw_content": "产品形态：Helio 是团队协作白板，支持注释和模板。"
+      },
+      {
+        "title": "Helio 部署",
+        "url": "https://example.com/helio-deploy",
+        "snippet": "部署信息已失效。",
+        "raw_content": ""
+      }
+    ]
+  },
+  "Helio 部署方式 官方": {
+    "results": [
+      {
+        "title": "Helio 部署",
+        "url": "https://example.com/helio-deploy",
+        "snippet": "部署信息已失效。",
+        "raw_content": ""
+      }
+    ]
+  },
+  "Helio 产品形态 部署方式": {
+    "results": [
+      {
+        "title": "Helio 简介",
+        "url": "https://example.com/helio",
+        "snippet": "Helio 是协作白板。",
+        "raw_content": "产品形态：Helio 是团队协作白板，支持注释和模板。"
+      },
+      {
+        "title": "Helio 部署",
+        "url": "https://example.com/helio-deploy",
+        "snippet": "部署信息已失效。",
+        "raw_content": ""
+      }
+    ]
+  },
+  "Helio 补充 缺失维度": {
+    "results": [
+      {
+        "title": "Helio 部署",
+        "url": "https://example.com/helio-deploy",
+        "snippet": "部署信息已失效。",
+        "raw_content": ""
+      }
+    ]
+  }
+}
