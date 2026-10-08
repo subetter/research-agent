@@ -109,7 +109,7 @@ def test_old_schema_migration_adds_evidence_columns(tmp_path):
 
     store = Store(path)
     columns = {row[1] for row in store.conn.execute("PRAGMA table_info(evidence)")}
-    assert {"dimensions", "canonical_url", "content_hash"} <= columns
+    assert {"dimensions", "canonical_url", "content_hash", "citation_role"} <= columns
     rows = store.evidence("run_old")
     assert len(rows) == 1
     assert rows[0]["quote"] == "同一段原文"
