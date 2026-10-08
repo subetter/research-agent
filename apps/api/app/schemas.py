@@ -54,3 +54,13 @@ class ClaimBundle(BaseModel):
     claims: list[ClaimDraft] = Field(default_factory=list, max_length=100)
     summary: str = Field(default="", max_length=3000)
 
+
+class ClaimVerdict(BaseModel):
+    subject: str
+    dimension: str
+    verification: Literal["fully", "partial", "contradicted", "unrelated"]
+
+
+class VerificationBundle(BaseModel):
+    results: list[ClaimVerdict] = Field(default_factory=list, max_length=100)
+

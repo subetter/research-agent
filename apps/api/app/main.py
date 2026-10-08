@@ -239,9 +239,9 @@ def create_app(config: Settings | None = None):
         if format == "csv":
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow(["模式", "对象", "维度", "结论", "类型", "证据 ID"])
+            writer.writerow(["模式", "对象", "维度", "结论", "类型", "核验", "证据 ID"])
             for claim in artifact["claims"]:
-                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], ";".join(claim["evidence_ids"])]
+                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], claim.get("verification", ""), ";".join(claim["evidence_ids"])]
                 # Spreadsheet formula injection protection.
                 writer.writerow(["'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value for value in values])
             content = "\ufeff" + output.getvalue()
@@ -249,7 +249,7 @@ def create_app(config: Settings | None = None):
         elif format == "markdown":
             lines = [f"# {artifact['title']}", "", f"> 模式：{run['mode']}。{artifact['verification_note']}", "", artifact["summary"], ""]
             for claim in artifact["claims"]:
-                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", "证据：" + ", ".join(claim["evidence_ids"]), ""])
+                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", f"核验：{claim.get('verification', '')}", "", "证据：" + ", ".join(claim["evidence_ids"]), ""])
             lines.append("## 原文证据")
             for ev in store().evidence(run_id):
                 lines.extend(["", f"### {ev['id']}", "", f"{ev['title']} · {ev['url']} · {ev['locator']}", "", ev["quote"], ""])
