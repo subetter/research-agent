@@ -17,9 +17,13 @@ test("项目、可编辑计划、成果与证据完整闭环", async ({page}) =>
   await page.getByRole("button", {name: /新建研究项目/}).click();
   await page.getByPlaceholder("例如：AI 研究产品竞品分析").fill(`浏览器验收 ${Date.now()}`);
   await page.getByRole("button", {name: "创建项目", exact: true}).click();
+  await page.getByRole("button", {name: "研究范围"}).click();
+  await page.getByLabel("研究对象", {exact: true}).fill("ChatGPT, Gemini");
+  await page.getByLabel("比较维度", {exact: true}).fill("产品形态, 交付方式");
   await page.getByLabel("研究目标", {exact: true}).fill("比较 AI 深度研究产品的产品形态、研究流程和交付方式");
   await page.getByRole("button", {name: "提交研究"}).click();
   await expect(page.getByText("先对齐研究方向")).toBeVisible();
+  await expect(page.getByText(/默认范围：截至/)).toBeVisible();
   await page.getByLabel("计划研究对象").fill("ChatGPT, Gemini");
   await page.getByLabel("计划比较维度").fill("产品形态, 交付方式");
   // Polling must not erase the user's plan edits.

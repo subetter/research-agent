@@ -5,12 +5,12 @@ import json
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response, JSONResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
-from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand
+from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate
 from .engine import Engine, coverage_matrix
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
@@ -95,6 +95,7 @@ def create_app(config: Settings | None = None):
             raise HTTPException(404, "任务不存在")
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
         plan = run.get("plan") or {}
+        run["waiting"] = plan.get("waiting") if run["status"] == "waiting_input" else None
         if plan.get("subjects") and plan.get("dimensions"):
             run["coverage"] = coverage_matrix(plan, store().evidence(run_id))
         return run
@@ -151,6 +152,8 @@ def create_app(config: Settings | None = None):
         run = get_run(run_id)
         if run["status"] != "waiting_input":
             raise HTTPException(409, "仅可在启动前编辑计划")
+        if (run.get("plan") or {}).get("waiting") == "clarify":
+            raise HTTPException(409, "请先补充研究对象与比较维度")
         next_plan = body.plan.model_dump()
         next_plan["max_search_calls"] = min(next_plan["max_search_calls"], config.max_search_calls)
         next_plan["max_gap_rounds"] = min(next_plan["max_gap_rounds"], config.max_gap_rounds)
@@ -158,6 +161,21 @@ def create_app(config: Settings | None = None):
             return store().update(run_id, body.expected_revision, plan=next_plan)
         except ValueError:
             raise HTTPException(409, "计划已更新，请刷新后重试")
+
+    @app.put("/api/runs/{run_id}/clarify")
+    def clarify(run_id: str, body: ClarifyUpdate):
+        run = get_run(run_id)
+        if run["status"] != "waiting_input" or (run.get("plan") or {}).get("waiting") != "clarify":
+            raise HTTPException(409, "当前不是澄清阶段")
+        current = dict(run.get("plan") or {})
+        request = dict(current.get("request") or {"question": run["question"]})
+        request["subjects"] = body.subjects
+        request["dimensions"] = body.dimensions
+        current["request"] = request
+        try:
+            return store().update(run_id, body.expected_revision, plan=current)
+        except ValueError:
+            raise HTTPException(409, "状态已更新，请刷新后重试")
 
     @app.post("/api/runs/{run_id}/commands", status_code=202)
     async def command(run_id: str, body: RunCommand):
@@ -213,10 +231,13 @@ def create_app(config: Settings | None = None):
     @app.get("/api/projects/{project_id}/documents")
     def documents(project_id: str):
         get_project(project_id)
-        return store().query("SELECT id,name,LENGTH(content) AS characters,created_at FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))
+        rows = store().query("SELECT id,name,LENGTH(content) AS characters,created_at,citable FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))
+        for row in rows:
+            row["citable"] = bool(row.get("citable"))
+        return rows
 
     @app.post("/api/projects/{project_id}/documents", status_code=201)
-    async def upload(project_id: str, file: UploadFile = File(...)):
+    async def upload(project_id: str, file: UploadFile = File(...), citable: bool = Form(False)):
         get_project(project_id)
         name = Path(file.filename or "document.txt").name
         if Path(name).suffix.lower() not in {".txt", ".md", ".csv"}:
@@ -228,7 +249,18 @@ def create_app(config: Settings | None = None):
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             raise HTTPException(422, "文件需要 UTF-8 编码")
-        return store().add_document(project_id, name, text)
+        return store().add_document(project_id, name, text, citable)
+
+    @app.patch("/api/projects/{project_id}/documents/{document_id}")
+    def update_document(project_id: str, document_id: str, body: DocumentUpdate):
+        get_project(project_id)
+        document = store().set_document_citable(project_id, document_id, body.citable)
+        if not document:
+            raise HTTPException(404, "资料不存在")
+        document["citable"] = bool(document.get("citable"))
+        document["characters"] = len(document.get("content") or "")
+        document.pop("content", None)
+        return document
 
     @app.get("/api/runs/{run_id}/export")
     def export(run_id: str, format: str = "markdown"):

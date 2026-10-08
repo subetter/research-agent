@@ -48,6 +48,13 @@ def normalize_dimensions(value) -> list[str]:
     return list(dict.fromkeys(item.strip() for item in value if isinstance(item, str) and item.strip()))
 
 
+def subject_from_task_key(task_key: str) -> str | None:
+    if not task_key or not task_key.startswith("research:"):
+        return None
+    body = task_key[len("research:"):]
+    return body.rsplit(":", 1)[0] if ":" in body else body
+
+
 def infer_dimensions_from_title(title: str) -> list[str]:
     parts = [part.strip() for part in (title or "").split("·")]
     if len(parts) >= 3 and "模拟" in parts[-1]:
@@ -120,6 +127,7 @@ class Store:
                 self.conn.execute("ALTER TABLE projects ADD COLUMN owner_id TEXT REFERENCES users(id)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id)")
             self._migrate_evidence()
+            self._migrate_documents()
 
     def close(self):
         self.conn.close()
@@ -231,6 +239,8 @@ class Store:
             self.conn.execute("ALTER TABLE evidence ADD COLUMN canonical_url TEXT")
         if "content_hash" not in columns:
             self.conn.execute("ALTER TABLE evidence ADD COLUMN content_hash TEXT")
+        if "citation_role" not in columns:
+            self.conn.execute("ALTER TABLE evidence ADD COLUMN citation_role TEXT DEFAULT 'fact'")
         rows = self.conn.execute("SELECT id, title, url, quote, dimensions, canonical_url, content_hash FROM evidence").fetchall()
         for row in rows:
             updates = {}
@@ -247,6 +257,11 @@ class Store:
                 sql = ",".join(f"{key}=?" for key in updates)
                 self.conn.execute(f"UPDATE evidence SET {sql} WHERE id=?", (*updates.values(), row["id"]))
 
+    def _migrate_documents(self):
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(documents)")}
+        if "citable" not in columns:
+            self.conn.execute("ALTER TABLE documents ADD COLUMN citable INTEGER DEFAULT 0")
+
     def add_evidence(self, project_id, run_id, task_key, item):
         quote = item["quote"]
         url = item["url"]
@@ -257,6 +272,7 @@ class Store:
         canon = item.get("canonical_url") or canonical_url(url)
         digest = item.get("content_hash") or content_hash(quote)
         dims_json = json.dumps(dims, ensure_ascii=False)
+        role = item.get("citation_role") or ("analysis" if item.get("source_type") == "document" and not item.get("citable") else "fact")
         with self.lock, self.conn:
             existing = self.conn.execute(
                 """SELECT id, dimensions FROM evidence WHERE run_id=? AND (
@@ -273,18 +289,41 @@ class Store:
                 return existing["id"]
             evidence_id = uid("ev")
             self.conn.execute(
-                """INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,dimensions,canonical_url,content_hash)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (evidence_id, project_id, run_id, task_key, item["title"], url, quote, locator, item["source_type"], item.get("fetched_at", now()), dims_json, canon, digest),
+                """INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,dimensions,canonical_url,content_hash,citation_role)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (evidence_id, project_id, run_id, task_key, item["title"], url, quote, locator, item["source_type"], item.get("fetched_at", now()), dims_json, canon, digest, role),
             )
-            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"], "dimensions": dims})
+            self._event(run_id, "evidence.created", {
+                "evidence_id": evidence_id,
+                "title": item["title"],
+                "dimensions": dims,
+                "subject": subject_from_task_key(task_key),
+                "url": url,
+                "source_type": item["source_type"],
+                "citation_role": role,
+            })
             return evidence_id
 
     def evidence(self, run_id):
         return self.query("SELECT * FROM evidence WHERE run_id=? ORDER BY rowid", (run_id,))
 
-    def add_document(self, project_id, name, content):
+    def add_document(self, project_id, name, content, citable=False):
         document_id = uid("doc")
         with self.lock, self.conn:
-            self.conn.execute("INSERT INTO documents VALUES(?,?,?,?,?)", (document_id, project_id, name, content, now()))
-        return {"id": document_id, "name": name, "characters": len(content)}
+            self.conn.execute(
+                "INSERT INTO documents(id,project_id,name,content,created_at,citable) VALUES(?,?,?,?,?,?)",
+                (document_id, project_id, name, content, now(), 1 if citable else 0),
+            )
+        return {"id": document_id, "name": name, "characters": len(content), "citable": bool(citable)}
+
+    def document(self, project_id, document_id):
+        rows = self.query("SELECT * FROM documents WHERE project_id=? AND id=?", (project_id, document_id))
+        return rows[0] if rows else None
+
+    def set_document_citable(self, project_id, document_id, citable):
+        with self.lock, self.conn:
+            current = self.conn.execute("SELECT id FROM documents WHERE project_id=? AND id=?", (project_id, document_id)).fetchone()
+            if current is None:
+                return None
+            self.conn.execute("UPDATE documents SET citable=? WHERE id=?", (1 if citable else 0, document_id))
+        return self.document(project_id, document_id)

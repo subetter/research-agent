@@ -4,7 +4,8 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
 from .providers import Provider
-from .store import infer_dimensions_from_title, normalize_dimensions, uid
+from .scope import apply_plan_defaults, infer_scope, needs_clarify
+from .store import infer_dimensions_from_title, normalize_dimensions, subject_from_task_key, uid
 
 log = logging.getLogger(__name__)
 
@@ -26,13 +27,6 @@ class ResearchState(TypedDict, total=False):
     bundle: dict
     gaps: list
     coverage: dict
-
-
-def subject_from_task_key(task_key: str) -> str | None:
-    if not task_key or not task_key.startswith("research:"):
-        return None
-    body = task_key[len("research:"):]
-    return body.rsplit(":", 1)[0] if ":" in body else body
 
 
 def evidence_dimensions(item: dict) -> list[str]:
@@ -104,6 +98,9 @@ def validate_claims(plan, bundle, evidence):
             item["text"] = "待确认：引用缺失或引用 ID 不合法，原结论未通过结构校验。"
             item["verification"] = "unconfirmed"
         else:
+            cited = [e for e in evidence if e.get("id") in ids]
+            if item.get("kind") == "fact" and cited and all(e.get("citation_role") == "analysis" for e in cited):
+                item["kind"] = "analysis"
             prior = claim.get("verification")
             if item.get("kind") == "unknown":
                 item["verification"] = prior if prior in {"unconfirmed", "contradicted", "unrelated"} else "unconfirmed"
@@ -133,6 +130,7 @@ class Engine:
         self.tasks = {}
         self.run_slots = asyncio.Semaphore(2)
         graph = StateGraph(ResearchState)
+        graph.add_node("clarify", self.clarify)
         graph.add_node("plan", self.plan)
         graph.add_node("approve", self.approve)
         graph.add_node("research", self.research)
@@ -140,7 +138,8 @@ class Engine:
         graph.add_node("synthesize", self.synthesize)
         graph.add_node("verify", self.verify)
         graph.add_node("render", self.render)
-        graph.add_edge(START, "plan")
+        graph.add_edge(START, "clarify")
+        graph.add_edge("clarify", "plan")
         graph.add_edge("plan", "approve")
         graph.add_edge("approve", "research")
         graph.add_edge("research", "gap_check")
@@ -157,13 +156,40 @@ class Engine:
         if run["status"] in ("pause_requested", "paused"):
             raise RunPaused()
 
+    async def clarify(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        request = dict(state.get("request") or {})
+        question = request.get("question") or run["question"]
+        subjects, dimensions = infer_scope(question, request)
+        request["subjects"] = subjects
+        request["dimensions"] = dimensions
+        if not needs_clarify(question, request):
+            return {"request": request}
+        prompt = "还缺少研究对象或比较维度。请各写至少一项；时间与地区会写成计划上的默认范围，不再追问。"
+        current = dict(run.get("plan") or {})
+        current.update({"waiting": "clarify", "clarify_question": prompt, "request": request})
+        self.store.update(run["id"], plan=current)
+        self.store.event(run["id"], "run.waiting_input", {"kind": "clarify", "question": prompt})
+        decision = interrupt({"kind": "clarify", "question": prompt, "missing": [name for name, values in (("subjects", subjects), ("dimensions", dimensions)) if not values]})
+        merged = {
+            **request,
+            "subjects": [item for item in (decision.get("subjects") or subjects) if str(item).strip()],
+            "dimensions": [item for item in (decision.get("dimensions") or dimensions) if str(item).strip()],
+        }
+        if not merged["subjects"] or not merged["dimensions"]:
+            raise ValueError("澄清后仍缺少研究对象或比较维度")
+        return {"request": merged}
+
     async def plan(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
+        request = state.get("request") or {}
         self.store.event(run["id"], "plan.started", {})
-        plan = await self.provider.plan(run, state["request"])
+        plan = await self.provider.plan(run, request)
+        plan = apply_plan_defaults(plan, request.get("question") or run["question"])
         self.store.update(run["id"], plan=plan)
-        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"]})
+        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"], "as_of": plan.get("as_of"), "regions": plan.get("regions")})
         return {"plan": plan, "round": 0}
 
     async def approve(self, state):
@@ -306,5 +332,10 @@ class Engine:
             run = self.store.run(run_id)
             return {"run_id": run_id, "request": run["plan"].get("request", {"question": run["question"]})}
         if any(getattr(task, "interrupts", ()) for task in snapshot.tasks):
-            return Command(resume={"plan": self.store.run(run_id)["plan"]})
+            run = self.store.run(run_id)
+            plan = run.get("plan") or {}
+            if plan.get("waiting") == "clarify":
+                request = plan.get("request") or {}
+                return Command(resume={"subjects": request.get("subjects") or [], "dimensions": request.get("dimensions") or []})
+            return Command(resume={"plan": plan})
         return None
