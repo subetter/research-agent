@@ -54,6 +54,26 @@ async def test_clarify_interrupt_only_when_scope_missing(tmp_path):
     store.close()
 
 
+async def test_sample_question_skips_clarify_and_writes_defaults(tmp_path):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), research_mode="demo")
+    store = Store(tmp_path / "business.sqlite")
+    async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "graph.sqlite")) as saver:
+        engine = Engine(settings, store, saver)
+        project = store.create_project("样本", "")
+        question = "调研 ChatGPT、Gemini 和 Claude 的深度研究产品形态，比较研究流程与交付方式。"
+        request = {"question": question, "subjects": [], "dimensions": []}
+        run = store.create_run(project["id"], question, "demo", {"request": request})
+        engine.schedule(run["id"], {"run_id": run["id"], "request": request})
+        ready = await wait_status(store, run["id"], {"waiting_input", "failed"})
+        assert ready["plan"].get("waiting") != "clarify"
+        assert ready["plan"]["subjects"] == ["ChatGPT", "Gemini", "Claude"]
+        assert "产品形态" in ready["plan"]["dimensions"]
+        assert ready["plan"]["as_of"]
+        assert ready["plan"]["regions"] == ["未限定"]
+        await engine.shutdown()
+    store.close()
+
+
 async def test_provided_scope_goes_to_plan_card(tmp_path):
     settings = Settings(_env_file=None, data_dir=str(tmp_path), research_mode="demo")
     store = Store(tmp_path / "business.sqlite")

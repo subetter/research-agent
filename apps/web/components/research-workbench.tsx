@@ -86,6 +86,9 @@ export default function Workbench() {
   useEffect(() => {
     lastSeqRef.current = 0;
     setRun(null); setEvidence([]); setEvents([]); setSelectedEvidence(null);
+  }, [runId]);
+
+  useEffect(() => {
     if (!runId) return;
     let stopped = false;
     let source: EventSource | null = null;
