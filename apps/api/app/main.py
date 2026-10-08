@@ -11,7 +11,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
 from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand
-from .engine import Engine
+from .engine import Engine, coverage_matrix
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
@@ -94,6 +94,9 @@ def create_app(config: Settings | None = None):
         if not run:
             raise HTTPException(404, "任务不存在")
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
+        plan = run.get("plan") or {}
+        if plan.get("subjects") and plan.get("dimensions"):
+            run["coverage"] = coverage_matrix(plan, store().evidence(run_id))
         return run
 
     @app.get("/api/health")

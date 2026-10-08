@@ -4,7 +4,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
 from .providers import Provider
-from .store import uid
+from .store import infer_dimensions_from_title, normalize_dimensions, uid
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +24,63 @@ class ResearchState(TypedDict, total=False):
     results: list[dict]
     round: int
     bundle: dict
-    gaps: list[str]
+    gaps: list
+    coverage: dict
+
+
+def subject_from_task_key(task_key: str) -> str | None:
+    if not task_key or not task_key.startswith("research:"):
+        return None
+    body = task_key[len("research:"):]
+    return body.rsplit(":", 1)[0] if ":" in body else body
+
+
+def evidence_dimensions(item: dict) -> list[str]:
+    dims = normalize_dimensions(item.get("dimensions"))
+    return dims or infer_dimensions_from_title(item.get("title") or "")
+
+
+def coverage_matrix(plan, evidence):
+    subjects = list(plan.get("subjects") or [])
+    dimensions = list(plan.get("dimensions") or [])
+    cells = {(subject, dimension): [] for subject in subjects for dimension in dimensions}
+    for item in evidence:
+        subject = subject_from_task_key(item.get("task_key") or "")
+        if subject is None:
+            continue
+        for dimension in evidence_dimensions(item):
+            if (subject, dimension) in cells:
+                cells[(subject, dimension)].append(item["id"])
+    gaps = [{"subject": subject, "dimension": dimension} for (subject, dimension), ids in cells.items() if not ids]
+    return {
+        "subjects": subjects,
+        "dimensions": dimensions,
+        "cells": [{"subject": subject, "dimension": dimension, "evidence_ids": ids, "covered": bool(ids)} for (subject, dimension), ids in cells.items()],
+        "covered": sum(1 for ids in cells.values() if ids),
+        "total": len(cells),
+        "gaps": gaps,
+    }
+
+
+def research_targets(plan, gaps):
+    if not gaps:
+        return [(subject, list(plan["dimensions"])) for subject in plan["subjects"]]
+    grouped = {}
+    for gap in gaps:
+        if isinstance(gap, str):
+            grouped[gap] = list(plan["dimensions"])
+            continue
+        subject = gap.get("subject")
+        dimension = gap.get("dimension")
+        if not subject:
+            continue
+        grouped.setdefault(subject, [])
+        if dimension:
+            if dimension not in grouped[subject]:
+                grouped[subject].append(dimension)
+        else:
+            grouped[subject] = list(plan["dimensions"])
+    return [(subject, dimensions) for subject, dimensions in grouped.items() if dimensions]
 
 
 def validate_claims(plan, bundle, evidence):
@@ -101,7 +157,7 @@ class Engine:
         semaphore = asyncio.Semaphore(max(1, self.settings.max_researchers))
         parent = self.store.run(run["parent_run_id"]) if run["parent_run_id"] else None
 
-        async def subject_task(subject):
+        async def subject_task(subject, dimensions):
             async with semaphore:
                 if state.get("round", 0) == 0 and parent and parent["artifact"] and parent["mode"] == run["mode"] and parent["plan"]["dimensions"] == plan["dimensions"] and subject in parent["plan"]["subjects"]:
                     # Reuse only parent evidence, retaining original fetch time. Live sources expire after a day.
@@ -112,19 +168,19 @@ class Engine:
                     if old:
                         ids = [self.store.add_evidence(run["project_id"], run["id"], f"research:{subject}:0", e) for e in old]
                         self.store.event(run["id"], "task.reused", {"subject": subject, "reason": "父任务相同维度的有效证据"})
-                        return {"subject": subject, "evidence_ids": ids, "error": None}
+                        return {"subject": subject, "evidence_ids": ids, "error": None, "dimensions": dimensions}
                 try:
-                    return await self.provider.research(run, plan, subject, state.get("round", 0), lambda: self.gate(run["id"]))
+                    return await self.provider.research(run, plan, subject, state.get("round", 0), lambda: self.gate(run["id"]), dimensions)
                 except (RunPaused, RunCancelled):
                     raise
                 except Exception as exc:
                     log.exception("Researcher failed run=%s subject=%s", run["id"], subject)
                     self.store.event(run["id"], "task.failed", {"subject": subject, "error": type(exc).__name__})
-                    return {"subject": subject, "evidence_ids": [], "error": "研究工具失败，请查看后台日志与调用轨迹"}
+                    return {"subject": subject, "evidence_ids": [], "error": "研究工具失败，请查看后台日志与调用轨迹", "dimensions": dimensions}
 
-        subjects = state.get("gaps") or plan["subjects"]
+        targets = research_targets(plan, state.get("gaps"))
         # Cancel sibling coroutines before resuming a failed node to prevent stale writes.
-        tasks = [asyncio.create_task(subject_task(s)) for s in subjects]
+        tasks = [asyncio.create_task(subject_task(subject, dimensions)) for subject, dimensions in targets]
         try:
             results = await asyncio.gather(*tasks)
         except BaseException:
@@ -137,13 +193,22 @@ class Engine:
     async def gap_check(self, state):
         await self.gate(state["run_id"])
         evidence = self.store.evidence(state["run_id"])
-        gaps = [s for s in state["plan"]["subjects"] if not any(e["task_key"].startswith(f"research:{s}:") for e in evidence)]
+        coverage = coverage_matrix(state["plan"], evidence)
+        gaps = coverage["gaps"]
         current_round = state.get("round", 0)
         model_left = self.store.usage_count(state["run_id"], "model") < self.settings.max_model_calls - self.settings.report_reserved_calls
         search_left = self.store.usage_count(state["run_id"], "search") < state["plan"]["max_search_calls"]
         more = bool(gaps and model_left and search_left and current_round < state["plan"]["max_gap_rounds"])
-        self.store.event(state["run_id"], "coverage.checked", {"subjects_with_evidence": len(state["plan"]["subjects"]) - len(gaps), "subjects_total": len(state["plan"]["subjects"]), "gaps": gaps, "will_retry": more})
-        return {"gaps": gaps if more else [], "round": current_round + 1}
+        covered_subjects = {item["subject"] for item in coverage["cells"] if item["covered"]}
+        self.store.event(state["run_id"], "coverage.checked", {
+            "cells_covered": coverage["covered"],
+            "cells_total": coverage["total"],
+            "subjects_with_evidence": len(covered_subjects),
+            "subjects_total": len(state["plan"]["subjects"]),
+            "gaps": gaps,
+            "will_retry": more,
+        })
+        return {"gaps": gaps if more else [], "round": current_round + 1, "coverage": coverage}
 
     def route(self, state):
         return "research" if state.get("gaps") else "synthesize"
@@ -161,7 +226,8 @@ class Engine:
         evidence = self.store.evidence(run["id"])
         claims = validate_claims(state["plan"], state["bundle"], evidence)
         unknown = sum(c["kind"] == "unknown" for c in claims)
-        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。", "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims)}}
+        coverage = coverage_matrix(state["plan"], evidence)
+        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。", "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         return {}
 

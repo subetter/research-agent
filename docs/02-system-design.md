@@ -1,8 +1,10 @@
 # Deep Research 工作台系统设计
 
+> **目标架构。** 下表与总图描述的是规划中的生产形态（PostgreSQL、Celery、Redis、MCP、Langfuse、Tailwind、pnpm、Docker Compose 等）。当前实现是 Next.js（npm lockfile，样式在 `globals.css`，无 Tailwind）+ FastAPI + LangGraph `StateGraph` + SQLite + 进程内 `asyncio`；模型适配在 `llm.py` / `providers.py` 自写，不依赖 LangChain。阅读当前范围请看 [README](../README.md) 与 04/06/07。
+
 系统采用前后端分离与后台 Worker。LangGraph 管理研究流程和检查点，Celery 管理任务派发，PostgreSQL 保存业务状态与证据，Redis 保存队列和短期缓存。研究结果以结构化结论和证据关联为核心，报告、对比表和演示稿从同一数据生成。
 
-版本为 0.1，日期为 2026 年 10 月 7 日。首版采用模块化单体，保留工具与模型适配接口，不拆分业务微服务。
+版本为 0.1，日期为 2026 年 10 月 7 日。当前落地为模块化单体；下文的队列、对象存储与观测组件仍是目标设计，不拆分业务微服务。
 
 ## 技术选型与职责
 

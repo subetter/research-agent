@@ -1,9 +1,11 @@
+import hashlib
 import json
 import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 
 def now() -> str:
@@ -12,6 +14,45 @@ def now() -> str:
 
 def uid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
+
+
+def canonical_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if not parsed.scheme or not parsed.hostname:
+        return (url or "").strip()
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname.lower()
+    port = parsed.port
+    if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+        netloc = f"{host}:{port}"
+    else:
+        netloc = host
+    path = parsed.path or "/"
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+    return urlunparse((scheme, netloc, path, "", parsed.query, ""))
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha256(" ".join((text or "").split()).encode()).hexdigest()
+
+
+def normalize_dimensions(value) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(item.strip() for item in value if isinstance(item, str) and item.strip()))
+
+
+def infer_dimensions_from_title(title: str) -> list[str]:
+    parts = [part.strip() for part in (title or "").split("·")]
+    if len(parts) >= 3 and "模拟" in parts[-1]:
+        return [parts[1]] if parts[1] else []
+    return []
 
 
 class Store:
@@ -39,6 +80,9 @@ class Store:
               id TEXT PRIMARY KEY, project_id TEXT REFERENCES projects(id), run_id TEXT,
               task_key TEXT, title TEXT, url TEXT, quote TEXT, locator TEXT,
               source_type TEXT, fetched_at TEXT,
+              dimensions TEXT DEFAULT '[]',
+              canonical_url TEXT,
+              content_hash TEXT,
               UNIQUE(run_id, task_key, url, locator));
             CREATE TABLE IF NOT EXISTS operations (
               run_id TEXT, key TEXT, result TEXT, PRIMARY KEY(run_id, key));
@@ -75,6 +119,7 @@ class Store:
             if "owner_id" not in columns:
                 self.conn.execute("ALTER TABLE projects ADD COLUMN owner_id TEXT REFERENCES users(id)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id)")
+            self._migrate_evidence()
 
     def close(self):
         self.conn.close()
@@ -87,6 +132,8 @@ class Store:
         for key in ("plan", "artifact", "payload", "result"):
             if key in out and out[key] is not None:
                 out[key] = json.loads(out[key])
+        if "dimensions" in out:
+            out["dimensions"] = normalize_dimensions(out["dimensions"])
         return out
 
     def query(self, sql, args=()):
@@ -176,14 +223,61 @@ class Store:
         with self.lock, self.conn:
             self.conn.execute("UPDATE usage SET status=?,tokens=? WHERE run_id=? AND key=?", (status, tokens, run_id, key))
 
+    def _migrate_evidence(self):
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(evidence)")}
+        if "dimensions" not in columns:
+            self.conn.execute("ALTER TABLE evidence ADD COLUMN dimensions TEXT DEFAULT '[]'")
+        if "canonical_url" not in columns:
+            self.conn.execute("ALTER TABLE evidence ADD COLUMN canonical_url TEXT")
+        if "content_hash" not in columns:
+            self.conn.execute("ALTER TABLE evidence ADD COLUMN content_hash TEXT")
+        rows = self.conn.execute("SELECT id, title, url, quote, dimensions, canonical_url, content_hash FROM evidence").fetchall()
+        for row in rows:
+            updates = {}
+            dims = normalize_dimensions(row["dimensions"])
+            if not dims:
+                inferred = infer_dimensions_from_title(row["title"])
+                if inferred:
+                    updates["dimensions"] = json.dumps(inferred, ensure_ascii=False)
+            if not row["canonical_url"] and row["url"]:
+                updates["canonical_url"] = canonical_url(row["url"])
+            if not row["content_hash"] and row["quote"]:
+                updates["content_hash"] = content_hash(row["quote"])
+            if updates:
+                sql = ",".join(f"{key}=?" for key in updates)
+                self.conn.execute(f"UPDATE evidence SET {sql} WHERE id=?", (*updates.values(), row["id"]))
+
     def add_evidence(self, project_id, run_id, task_key, item):
+        quote = item["quote"]
+        url = item["url"]
+        locator = item["locator"]
+        dims = normalize_dimensions(item.get("dimensions"))
+        if not dims:
+            dims = infer_dimensions_from_title(item.get("title", ""))
+        canon = item.get("canonical_url") or canonical_url(url)
+        digest = item.get("content_hash") or content_hash(quote)
+        dims_json = json.dumps(dims, ensure_ascii=False)
         with self.lock, self.conn:
-            existing = self.conn.execute("SELECT id FROM evidence WHERE run_id=? AND task_key=? AND url=? AND locator=?", (run_id, task_key, item["url"], item["locator"])).fetchone()
+            existing = self.conn.execute(
+                """SELECT id, dimensions FROM evidence WHERE run_id=? AND (
+                     (content_hash IS NOT NULL AND content_hash=?)
+                     OR (canonical_url IS NOT NULL AND canonical_url=? AND quote=?)
+                     OR (task_key=? AND url=? AND locator=?)
+                   )""",
+                (run_id, digest, canon, quote, task_key, url, locator),
+            ).fetchone()
             if existing:
-                return existing[0]
+                merged = list(dict.fromkeys(normalize_dimensions(existing["dimensions"]) + dims))
+                if merged != normalize_dimensions(existing["dimensions"]):
+                    self.conn.execute("UPDATE evidence SET dimensions=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), existing["id"]))
+                return existing["id"]
             evidence_id = uid("ev")
-            self.conn.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?,?)", (evidence_id, project_id, run_id, task_key, item["title"], item["url"], item["quote"], item["locator"], item["source_type"], item.get("fetched_at", now())))
-            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"]})
+            self.conn.execute(
+                """INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,dimensions,canonical_url,content_hash)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (evidence_id, project_id, run_id, task_key, item["title"], url, quote, locator, item["source_type"], item.get("fetched_at", now()), dims_json, canon, digest),
+            )
+            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"], "dimensions": dims})
             return evidence_id
 
     def evidence(self, run_id):
