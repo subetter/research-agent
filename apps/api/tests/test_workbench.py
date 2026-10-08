@@ -182,6 +182,36 @@ async def test_api_validation_upload_and_export(tmp_path):
             assert denied.status_code == 403
 
 
+async def test_supplementary_round_targets_missing_cells(runtime):
+    engine, store = runtime
+    calls = []
+    original = engine.provider.research
+
+    async def spy(run, plan, subject, round_index, gate, dimensions=None):
+        targeted = [plan["dimensions"][0]] if round_index == 0 else list(dimensions or plan["dimensions"])
+        calls.append((subject, round_index, targeted))
+        return await original(run, plan, subject, round_index, gate, targeted)
+
+    engine.provider.research = spy
+    run = await new_run(engine, store)
+    await start(engine, store, run)
+    result = await wait_status(store, run["id"], {"completed", "failed"})
+    assert result["status"] == "completed", result["error"]
+    first = [item for item in calls if item[1] == 0]
+    second = [item for item in calls if item[1] == 1]
+    assert {item[0] for item in first} == {"产品 A", "产品 B"}
+    assert all(item[2] == ["产品形态"] for item in first)
+    assert second
+    assert {item[0] for item in second} == {"产品 A", "产品 B"}
+    assert all(item[2] == ["研究流程"] for item in second)
+    coverage = result["artifact"]["coverage"]
+    assert coverage["covered"] == coverage["total"] == 4
+    assert coverage["gaps"] == []
+    events = store.query("SELECT * FROM events WHERE run_id=? AND type='coverage.checked'", (run["id"],))
+    assert any(event["payload"]["will_retry"] for event in events)
+    assert any(not event["payload"]["will_retry"] for event in events)
+
+
 async def test_live_mode_requires_keys_without_fallback(tmp_path):
     settings = config(tmp_path)
     settings.research_mode = "live"
