@@ -1,0 +1,19 @@
+.venv/
+.python/
+.cache/
+.env
+data/
+node_modules/
+.next/
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.log
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# local scratch and macOS metadata
+.rwb-src.tgz
+._*
+.AppleDouble

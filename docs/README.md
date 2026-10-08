@@ -1,0 +1,20 @@
+# Research Workbench 文档索引
+
+系统设计与配套文档统一存放在项目根目录 `docs/`，同步日期：2026-10-08。
+
+## 阅读顺序
+
+1. [需求文档](01-requirements.md)：项目目标、用户场景、功能范围和验收标准。
+2. [系统设计](02-system-design.md)：目标架构、Agent 编排、工具、数据模型、接口、恢复与安全设计。
+3. [开发与评测计划](03-delivery-and-evaluation.md)：阶段规划、评测和简历作品交付。
+4. [首版交付记录](04-development-status.md)：初次交付的历史快照。
+5. [账号与会话设计](05-accounts-and-conversations.md)：多用户隔离、普通会话和管理员审阅。
+6. [DeepSeek 接入说明](06-deepseek-integration.md)：模型配置、Tavily 搜索接入和流式输出。
+
+## 设计与实现的区别
+
+01–03 是开发前的目标设计，不代表所有技术已经落地。当前实现采用 Next.js、FastAPI、LangGraph 和 SQLite；PostgreSQL、pgvector、Redis/Celery、MCP 和 Langfuse 等属于后续建设计划。
+
+当前联网搜索工具用于深度研究；普通会话调用模型并支持流式显示，尚未接入联网搜索工具。运行和配置说明以[项目 README](../README.md)为准。密钥仅保存在本地配置中，不写入设计文档。
+
+7. [预算与失败恢复](07-budget-and-recovery.md)：调用上限、报告预留、额度分配与页面提示。

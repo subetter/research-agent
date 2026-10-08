@@ -1,0 +1,215 @@
+import asyncio
+import logging
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Command, interrupt
+from .providers import Provider
+from .store import uid
+
+log = logging.getLogger(__name__)
+
+
+class RunPaused(Exception):
+    pass
+
+
+class RunCancelled(Exception):
+    pass
+
+
+class ResearchState(TypedDict, total=False):
+    run_id: str
+    request: dict
+    plan: dict
+    results: list[dict]
+    round: int
+    bundle: dict
+    gaps: list[str]
+
+
+def validate_claims(plan, bundle, evidence):
+    valid = {e["id"] for e in evidence}
+    seen = set()
+    claims = []
+    for claim in bundle.get("claims", []):
+        pair = (claim["subject"], claim["dimension"])
+        if pair in seen or pair[0] not in plan["subjects"] or pair[1] not in plan["dimensions"]:
+            continue
+        seen.add(pair)
+        original = claim.get("evidence_ids", [])
+        ids = list(dict.fromkeys(x for x in original if x in valid))
+        item = {**claim, "id": uid("claim"), "evidence_ids": ids}
+        if len(ids) != len(set(original)) or (claim["kind"] == "fact" and not ids):
+            item["kind"] = "unknown"
+            item["text"] = "待确认：引用缺失或引用 ID 不合法，原结论未通过结构校验。"
+        item["verification"] = "unconfirmed" if item["kind"] == "unknown" else "reference_checked"
+        claims.append(item)
+    for subject in plan["subjects"]:
+        for dimension in plan["dimensions"]:
+            if (subject, dimension) not in seen:
+                claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "kind": "unknown", "verification": "unconfirmed"})
+    return claims
+
+
+class Engine:
+    def __init__(self, settings, store, checkpointer):
+        self.settings = settings
+        self.store = store
+        self.provider = Provider(settings, store)
+        self.tasks = {}
+        self.run_slots = asyncio.Semaphore(2)
+        graph = StateGraph(ResearchState)
+        graph.add_node("plan", self.plan)
+        graph.add_node("approve", self.approve)
+        graph.add_node("research", self.research)
+        graph.add_node("gap_check", self.gap_check)
+        graph.add_node("synthesize", self.synthesize)
+        graph.add_node("render", self.render)
+        graph.add_edge(START, "plan")
+        graph.add_edge("plan", "approve")
+        graph.add_edge("approve", "research")
+        graph.add_edge("research", "gap_check")
+        graph.add_conditional_edges("gap_check", self.route, {"research": "research", "synthesize": "synthesize"})
+        graph.add_edge("synthesize", "render")
+        graph.add_edge("render", END)
+        self.graph = graph.compile(checkpointer=checkpointer)
+
+    async def gate(self, run_id):
+        run = self.store.run(run_id)
+        if run["status"] in ("cancel_requested", "cancelled"):
+            raise RunCancelled()
+        if run["status"] in ("pause_requested", "paused"):
+            raise RunPaused()
+
+    async def plan(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        self.store.event(run["id"], "plan.started", {})
+        plan = await self.provider.plan(run, state["request"])
+        self.store.update(run["id"], plan=plan)
+        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"]})
+        return {"plan": plan, "round": 0}
+
+    async def approve(self, state):
+        decision = interrupt({"kind": "approve_plan", "plan": state["plan"]})
+        return {"plan": decision["plan"]}
+
+    async def research(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        plan = state["plan"]
+        semaphore = asyncio.Semaphore(max(1, self.settings.max_researchers))
+        parent = self.store.run(run["parent_run_id"]) if run["parent_run_id"] else None
+
+        async def subject_task(subject):
+            async with semaphore:
+                if state.get("round", 0) == 0 and parent and parent["artifact"] and parent["mode"] == run["mode"] and parent["plan"]["dimensions"] == plan["dimensions"] and subject in parent["plan"]["subjects"]:
+                    # Reuse only parent evidence, retaining original fetch time. Live sources expire after a day.
+                    from datetime import datetime, timezone, timedelta
+                    old = [e for e in self.store.evidence(parent["id"]) if e["task_key"].startswith(f"research:{subject}:")]
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
+                    old = [e for e in old if run["mode"] == "demo" or datetime.fromisoformat(e["fetched_at"]) >= cutoff]
+                    if old:
+                        ids = [self.store.add_evidence(run["project_id"], run["id"], f"research:{subject}:0", e) for e in old]
+                        self.store.event(run["id"], "task.reused", {"subject": subject, "reason": "父任务相同维度的有效证据"})
+                        return {"subject": subject, "evidence_ids": ids, "error": None}
+                try:
+                    return await self.provider.research(run, plan, subject, state.get("round", 0), lambda: self.gate(run["id"]))
+                except (RunPaused, RunCancelled):
+                    raise
+                except Exception as exc:
+                    log.exception("Researcher failed run=%s subject=%s", run["id"], subject)
+                    self.store.event(run["id"], "task.failed", {"subject": subject, "error": type(exc).__name__})
+                    return {"subject": subject, "evidence_ids": [], "error": "研究工具失败，请查看后台日志与调用轨迹"}
+
+        subjects = state.get("gaps") or plan["subjects"]
+        # Cancel sibling coroutines before resuming a failed node to prevent stale writes.
+        tasks = [asyncio.create_task(subject_task(s)) for s in subjects]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        return {"results": state.get("results", []) + results, "gaps": []}
+
+    async def gap_check(self, state):
+        await self.gate(state["run_id"])
+        evidence = self.store.evidence(state["run_id"])
+        gaps = [s for s in state["plan"]["subjects"] if not any(e["task_key"].startswith(f"research:{s}:") for e in evidence)]
+        current_round = state.get("round", 0)
+        model_left = self.store.usage_count(state["run_id"], "model") < self.settings.max_model_calls - self.settings.report_reserved_calls
+        search_left = self.store.usage_count(state["run_id"], "search") < state["plan"]["max_search_calls"]
+        more = bool(gaps and model_left and search_left and current_round < state["plan"]["max_gap_rounds"])
+        self.store.event(state["run_id"], "coverage.checked", {"subjects_with_evidence": len(state["plan"]["subjects"]) - len(gaps), "subjects_total": len(state["plan"]["subjects"]), "gaps": gaps, "will_retry": more})
+        return {"gaps": gaps if more else [], "round": current_round + 1}
+
+    def route(self, state):
+        return "research" if state.get("gaps") else "synthesize"
+
+    async def synthesize(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        self.store.event(run["id"], "report.started", {})
+        bundle = await self.provider.synthesize(run, state["plan"], self.store.evidence(run["id"]), lambda: self.gate(run["id"]))
+        return {"bundle": bundle}
+
+    async def render(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        evidence = self.store.evidence(run["id"])
+        claims = validate_claims(state["plan"], state["bundle"], evidence)
+        unknown = sum(c["kind"] == "unknown" for c in claims)
+        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。", "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims)}}
+        self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
+        return {}
+
+    def schedule(self, run_id, input):
+        task = self.tasks.get(run_id)
+        if task and not task.done():
+            raise ValueError("任务仍在执行，请等待状态更新")
+        self.tasks[run_id] = asyncio.create_task(self.execute(run_id, input))
+
+    async def execute(self, run_id, input):
+        try:
+            async with self.run_slots:
+                await self.gate(run_id)
+                async with asyncio.timeout(self.settings.run_timeout_seconds):
+                    output = await self.graph.ainvoke(input, {"configurable": {"thread_id": run_id}, "recursion_limit": 30})
+                if output.get("__interrupt__"):
+                    await self.gate(run_id)
+                    self.store.update(run_id, status="waiting_input")
+        except RunPaused:
+            self.store.update(run_id, status="paused")
+        except RunCancelled:
+            self.store.update(run_id, status="cancelled")
+        except asyncio.CancelledError:
+            if self.store.run(run_id)["status"] not in ("completed", "partial", "cancelled", "waiting_input"):
+                self.store.update(run_id, status="paused")
+            raise
+        except Exception as exc:
+            log.exception("Run failed: %s", run_id)
+            from .providers import BudgetExceeded
+            if isinstance(exc, (BudgetExceeded, ValueError)):
+                reason = str(exc)[:500]
+            elif isinstance(exc, TimeoutError):
+                reason = "研究执行超时，已保存的证据保留，可重试继续。"
+            else:
+                reason = f"{type(exc).__name__}：执行失败，请查看本地后台日志；已保存的证据保留。"
+            self.store.update(run_id, status="failed", error=reason)
+
+    async def shutdown(self):
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def resume_input(self, run_id):
+        snapshot = await self.graph.aget_state({"configurable": {"thread_id": run_id}})
+        if not snapshot.values:
+            run = self.store.run(run_id)
+            return {"run_id": run_id, "request": run["plan"].get("request", {"question": run["question"]})}
+        if any(getattr(task, "interrupts", ()) for task in snapshot.tasks):
+            return Command(resume={"plan": self.store.run(run_id)["plan"]})
+        return None
