@@ -1,0 +1,77 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"比较 Cursor 与 Copilot 的产品形态和目标用户\", \"subjects\": [\"Cursor\", \"Copilot\"], \"dimensions\": [\"产品形态\", \"目标用户\"], \"questions\": [\"收集Cursor的直接来源\", \"收集Copilot的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:Cursor:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Cursor-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Cursor 产品形态 目标用户 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Cursor:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Cursor-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/cursor\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Cursor:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Copilot:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Copilot-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Copilot 产品形态 目标用户 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Copilot:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Copilot-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/copilot\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Copilot:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  }
+}

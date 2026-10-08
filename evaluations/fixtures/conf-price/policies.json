@@ -1,0 +1,36 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "kind": "analysis",
+        "text": "官方标价每席每月 40 美元，转载评测写 10 美元，两口径并存。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "verification": "partial"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "Atlas 每月只要 10 美元。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "定价",
+        "verification": "contradicted"
+      }
+    ]
+  }
+}

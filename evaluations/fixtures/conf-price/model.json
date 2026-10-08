@@ -1,0 +1,57 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"核实 Atlas 的定价，如有冲突请保留两个口径\", \"subjects\": [\"Atlas\"], \"dimensions\": [\"定价\"], \"questions\": [\"收集Atlas的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:Atlas:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Atlas-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Atlas 定价 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Atlas:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Atlas-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/atlas-price\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Atlas:0:2": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Atlas-r1",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/atlas-price-repost\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Atlas:0:3": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  }
+}

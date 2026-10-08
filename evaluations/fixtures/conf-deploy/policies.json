@@ -1,0 +1,36 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "kind": "analysis",
+        "text": "官方只提供云端；博客称有私有化，来源冲突。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "verification": "partial"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "kind": "fact",
+        "text": "Beacon 已经全面支持私有化部署。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Beacon",
+        "dimension": "部署方式",
+        "verification": "contradicted"
+      }
+    ]
+  }
+}

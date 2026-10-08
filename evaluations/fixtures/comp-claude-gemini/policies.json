@@ -1,0 +1,102 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Claude",
+        "dimension": "研究流程",
+        "kind": "fact",
+        "text": "Claude 先澄清再检索并写带引用草稿。"
+      },
+      {
+        "subject": "Claude",
+        "dimension": "交付方式",
+        "kind": "fact",
+        "text": "Claude 以对话和 Markdown 交付。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "研究流程",
+        "kind": "fact",
+        "text": "Gemini Deep Research 先给出可编辑计划。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "交付方式",
+        "kind": "fact",
+        "text": "Gemini 完成后生成带链接的研究报告。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Claude",
+        "dimension": "研究流程",
+        "verification": "fully"
+      },
+      {
+        "subject": "Claude",
+        "dimension": "交付方式",
+        "verification": "fully"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "研究流程",
+        "verification": "fully"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "交付方式",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Claude",
+        "dimension": "研究流程",
+        "kind": "fact",
+        "text": "Claude 可写长报告。"
+      },
+      {
+        "subject": "Claude",
+        "dimension": "交付方式",
+        "kind": "unknown",
+        "text": "摘要未说明交付方式。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "研究流程",
+        "kind": "fact",
+        "text": "Gemini 能做深度研究。"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "交付方式",
+        "kind": "unknown",
+        "text": "摘要未说明交付方式。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Claude",
+        "dimension": "研究流程",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "Claude",
+        "dimension": "交付方式",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "研究流程",
+        "verification": "partial"
+      },
+      {
+        "subject": "Gemini",
+        "dimension": "交付方式",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

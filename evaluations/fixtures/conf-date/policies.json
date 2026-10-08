@@ -1,0 +1,36 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "kind": "analysis",
+        "text": "一则来源写 2024 年 6 月发布写作工作台，另一则写 2025 年 1 月上线。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "verification": "partial"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "NovaWriter 于 2025 年才首次发布。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "verification": "contradicted"
+      }
+    ]
+  }
+}

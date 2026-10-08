@@ -74,6 +74,15 @@ cd apps/api
 .venv/bin/python -m pytest -q
 ```
 
+离线评测（无需 API 密钥，Tavily/模型 HTTP 钉在 `evaluations/fixtures/`）：
+
+```bash
+cd evaluations
+../apps/api/.venv/bin/python run.py --write-fixtures --out results/latest
+```
+
+说明与最近一次数字见 `evaluations/README.md`、`evaluations/RESULTS.md`。评分脚本只读导出的 artifact JSON。演示模式的语义支持率记为 n/a。
+
 ```bash
 cd apps/web
 npm run typecheck
@@ -92,14 +101,14 @@ PLAYWRIGHT_BROWSERS_PATH=../../.cache/browsers npx playwright test
 
 首版无 Docker 前置要求，采用单进程本地调度。前端是 npm lockfile 与 `globals.css`，没有 Tailwind，也没有 Docker Compose。只读研究工具有结果缓存，证据写入幂等；暂未实现多 Worker 租约 fencing、事务 Outbox、生产鉴权与任务消息队列。运行图可以在节点边界恢复；外部请求无法保证只计费一次。资料目前为原文片段存储，没有向量索引、完整网页快照与内容版本体系。
 
-缺口检查按对象×维度格子判断是否已有直接原文；补充轮只针对未覆盖格子做定向检索，并遵守每对象搜索配额与 `max_gap_rounds`。联网模式在综合之后对照入库原文做支持性核验，演示模式只标记引用是否存在。尚未做来源冲突识别或离线评测集。Live 研究节点包含模型工具循环；短请求连通已验证，完整研究质量未做离线评测。并行调用和本地读写边界已纳入测试。
+缺口检查按对象×维度格子判断是否已有直接原文；补充轮只针对未覆盖格子做定向检索，并遵守每对象搜索配额与 `max_gap_rounds`。联网模式在综合之后对照入库原文做支持性核验，演示模式只标记引用是否存在。`evaluations/` 提供 10 题固定快照离线评测（竞品 / 缺失 / 冲突），对照单次搜索基线 A，重复 3 次取全部均值。这不是来源冲突自动识别，也不是 24 题消融或 Langfuse。并行调用和本地读写边界已纳入测试。
 
 ## 下一阶段
 
 1. PDF 解析、PostgreSQL 与 pgvector 混合检索、重排。
 2. MCP 项目工具 Server 与按需加载 Skills。
 3. Redis 与 Celery、任务 Outbox、租约与更完整幂等账本。
-4. Langfuse、固定评测集、单 Agent 与多 Agent 对照。
+4. Langfuse / LangSmith、24 题消融、人工标注对、实时联网评测。
 5. 成果版本编辑、冲突检测、演示稿与隔离代码沙箱。
 
 设计方案位于 `docs/`，阶段目标与当前实现范围不同。真实数据、API 密钥、运行文件和缓存已从 Git 忽略。

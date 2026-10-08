@@ -13,9 +13,9 @@
 
 ## 设计与实现的区别
 
-01–03 是开发前的目标设计，文首已标明；其中的 PostgreSQL、Celery、MCP、Langfuse、评测集、pnpm / Tailwind / Docker Compose 等**不代表当前仓库**。不要为这些后续项添加空目录。
+01–03 是开发前的目标设计，文首已标明；其中的 PostgreSQL、Celery、MCP、Langfuse、24 题消融、pnpm / Tailwind / Docker Compose 等**不代表当前仓库**。不要为这些后续项添加空目录。
 
-当前实现是 Next.js（npm lockfile，样式在 `globals.css`）+ FastAPI + LangGraph `StateGraph` + SQLite + 进程内 `asyncio`；模型适配自写，不依赖 LangChain。已实现范围、密钥连通记录与预算策略以[项目 README](../README.md)、[04 首版交付](04-development-status.md)（历史快照）、[05 账号与会话](05-accounts-and-conversations.md)、[06 DeepSeek 接入](06-deepseek-integration.md)、[07 预算与恢复](07-budget-and-recovery.md)为准。
+当前实现是 Next.js（npm lockfile，样式在 `globals.css`）+ FastAPI + LangGraph `StateGraph` + SQLite + 进程内 `asyncio`；模型适配自写，不依赖 LangChain。已有根目录 `evaluations/`：10 题固定快照离线评测，见 [evaluations/README.md](../evaluations/README.md)。已实现范围、密钥连通记录与预算策略以[项目 README](../README.md)、[04 首版交付](04-development-status.md)（历史快照）、[05 账号与会话](05-accounts-and-conversations.md)、[06 DeepSeek 接入](06-deepseek-integration.md)、[07 预算与恢复](07-budget-and-recovery.md)为准。
 
 当前联网搜索工具用于深度研究；普通会话调用模型并支持 POST SSE 流式显示，尚未接入联网搜索工具。密钥仅保存在本地配置中，不写入设计文档。
 
