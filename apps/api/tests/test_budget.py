@@ -19,8 +19,11 @@ async def test_report_reserved_and_cached_retry(tmp_path, monkeypatch):
         await provider.chat(run['id'], [], 'research:overflow')
     await provider.chat(run['id'], [], 'synthesize')
     await provider.chat(run['id'], [], 'synthesize')
-    assert len(calls) == 4
-    assert store.usage_count(run['id'], 'model') == 4
+    await provider.chat(run['id'], [], 'verify')
+    with pytest.raises(BudgetExceeded):
+        await provider.chat(run['id'], [], 'research:after-report')
+    assert len(calls) == 5
+    assert store.usage_count(run['id'], 'model') == 5
     store.close()
 
 async def test_research_budget_degrades(tmp_path):

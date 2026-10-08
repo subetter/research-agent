@@ -83,6 +83,9 @@ def research_targets(plan, gaps):
     return [(subject, dimensions) for subject, dimensions in grouped.items() if dimensions]
 
 
+VERIFICATION_VALUES = {"fully", "partial", "contradicted", "unrelated", "reference_checked", "unconfirmed"}
+
+
 def validate_claims(plan, bundle, evidence):
     valid = {e["id"] for e in evidence}
     seen = set()
@@ -95,16 +98,31 @@ def validate_claims(plan, bundle, evidence):
         original = claim.get("evidence_ids", [])
         ids = list(dict.fromkeys(x for x in original if x in valid))
         item = {**claim, "id": uid("claim"), "evidence_ids": ids}
-        if len(ids) != len(set(original)) or (claim["kind"] == "fact" and not ids):
+        structural_fail = len(ids) != len(set(original)) or (claim.get("kind") == "fact" and not ids)
+        if structural_fail:
             item["kind"] = "unknown"
             item["text"] = "待确认：引用缺失或引用 ID 不合法，原结论未通过结构校验。"
-        item["verification"] = "unconfirmed" if item["kind"] == "unknown" else "reference_checked"
+            item["verification"] = "unconfirmed"
+        else:
+            prior = claim.get("verification")
+            if item.get("kind") == "unknown":
+                item["verification"] = prior if prior in {"unconfirmed", "contradicted", "unrelated"} else "unconfirmed"
+            elif prior in VERIFICATION_VALUES:
+                item["verification"] = prior
+            else:
+                item["verification"] = "reference_checked"
         claims.append(item)
     for subject in plan["subjects"]:
         for dimension in plan["dimensions"]:
             if (subject, dimension) not in seen:
                 claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "kind": "unknown", "verification": "unconfirmed"})
     return claims
+
+
+def verification_note(mode):
+    if mode == "demo":
+        return "演示模式只按规则标记引用是否存在（reference_checked），未做摘录是否支持主张的语义判断。"
+    return "已对照入库原文摘录判断支持程度（fully / partial / contradicted / unrelated）；不被原文支持的事实降为待确认。不能保证结论为真，仍需人工抽查。"
 
 
 class Engine:
@@ -120,13 +138,15 @@ class Engine:
         graph.add_node("research", self.research)
         graph.add_node("gap_check", self.gap_check)
         graph.add_node("synthesize", self.synthesize)
+        graph.add_node("verify", self.verify)
         graph.add_node("render", self.render)
         graph.add_edge(START, "plan")
         graph.add_edge("plan", "approve")
         graph.add_edge("approve", "research")
         graph.add_edge("research", "gap_check")
         graph.add_conditional_edges("gap_check", self.route, {"research": "research", "synthesize": "synthesize"})
-        graph.add_edge("synthesize", "render")
+        graph.add_edge("synthesize", "verify")
+        graph.add_edge("verify", "render")
         graph.add_edge("render", END)
         self.graph = graph.compile(checkpointer=checkpointer)
 
@@ -220,6 +240,14 @@ class Engine:
         bundle = await self.provider.synthesize(run, state["plan"], self.store.evidence(run["id"]), lambda: self.gate(run["id"]))
         return {"bundle": bundle}
 
+    async def verify(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        self.store.event(run["id"], "verify.started", {"mode": run["mode"]})
+        bundle = await self.provider.verify(run, state["plan"], state["bundle"], self.store.evidence(run["id"]), lambda: self.gate(run["id"]))
+        self.store.event(run["id"], "verify.finished", {"mode": run["mode"]})
+        return {"bundle": bundle}
+
     async def render(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
@@ -227,7 +255,8 @@ class Engine:
         claims = validate_claims(state["plan"], state["bundle"], evidence)
         unknown = sum(c["kind"] == "unknown" for c in claims)
         coverage = coverage_matrix(state["plan"], evidence)
-        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。", "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
+        supported = sum(c.get("verification") in {"fully", "partial", "reference_checked"} for c in claims)
+        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": verification_note(run["mode"]), "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         return {}
 

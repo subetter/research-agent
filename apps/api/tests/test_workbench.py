@@ -87,6 +87,7 @@ async def test_full_graph_with_edited_plan(runtime):
     assert result["status"] == "completed", result["error"]
     assert len(result["artifact"]["claims"]) == 1
     assert result["artifact"]["claims"][0]["subject"] == "修改后的产品"
+    assert result["artifact"]["claims"][0]["verification"] == "reference_checked"
     assert store.evidence(run["id"])[0]["source_type"] == "demo"
     events = store.query("SELECT * FROM events WHERE run_id=? ORDER BY seq", (run["id"],))
     assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
