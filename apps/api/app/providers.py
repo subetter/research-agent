@@ -9,6 +9,7 @@ from .llm import complete
 from .scope import apply_plan_defaults, truncate
 from .skills import allowed_tools_for, choose_skill, inject_skill, load_skill, skill_catalog, skill_prompt
 from .store import normalize_dimensions, uid
+from .tracing import get_tracing
 
 REPORT_KEYS = {"synthesize", "verify"}
 LIVE_VERDICTS = {"fully", "partial", "contradicted", "unrelated"}
@@ -375,6 +376,15 @@ class Provider:
                 except (ValueError, httpx.HTTPError) as exc:
                     output = {"error": type(exc).__name__, "message": "工具调用失败，可调整参数或尝试其他来源。"}
                 self.store.event(run["id"], "tool.finished", {"subject": subject, "tool": name, "target": target, "failed": "error" in output})
+                if name in {"search_web", "read_source", "search_project"}:
+                    preview = output
+                    if name == "search_web":
+                        preview = {"results": [{"title": item.get("title"), "url": item.get("url")} for item in (output.get("results") or [])[:4]], "budget_exhausted": output.get("budget_exhausted")}
+                    elif name == "read_source":
+                        preview = {"evidence_count": len(output.get("evidence") or []), "error": output.get("error")}
+                    elif name == "search_project":
+                        preview = {"candidates": [{"id": item.get("id"), "title": item.get("title")} for item in (output.get("candidates") or [])[:4]], "note": output.get("note")}
+                    get_tracing().tool(name, input={"target": target}, output=preview, metadata={"subject": subject})
                 messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(output, ensure_ascii=False)})
         return {"subject": subject, "evidence_ids": list(dict.fromkeys(evidence_ids)), "error": None if evidence_ids else "未取得可读取的原文证据", "dimensions": target_dims}
 

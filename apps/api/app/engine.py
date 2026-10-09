@@ -6,6 +6,7 @@ from langgraph.types import Command, interrupt
 from .providers import Provider
 from .scope import apply_plan_defaults, infer_scope, needs_clarify
 from .store import infer_dimensions_from_title, normalize_dimensions, subject_from_task_key, uid
+from .tracing import get_tracing
 
 log = logging.getLogger(__name__)
 
@@ -183,6 +184,10 @@ class Engine:
         return {"configurable": {"thread_id": f"{run_id}:research:{subject}:{round_index}"}}
 
     async def investigate(self, state):
+        with get_tracing().span("investigate", trace_id=state.get("run_id"), metadata={"subject": state.get("subject"), "round": state.get("round", 0)}):
+            return await self._investigate(state)
+
+    async def _investigate(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         result = await self.provider.research(
@@ -196,6 +201,10 @@ class Engine:
         return {"result": subject_summary(result)}
 
     async def run_researcher(self, run, plan, subject, round_index, dimensions):
+        with get_tracing().span(f"researcher:{subject}", trace_id=run["id"], metadata={"subject": subject, "round": round_index, "dimensions": dimensions}):
+            return await self._run_researcher(run, plan, subject, round_index, dimensions)
+
+    async def _run_researcher(self, run, plan, subject, round_index, dimensions):
         config = self.researcher_config(run["id"], subject, round_index)
         snapshot = await self.researcher.aget_state(config)
         if snapshot.values and not snapshot.next and snapshot.values.get("result"):
@@ -222,6 +231,10 @@ class Engine:
             raise RunPaused()
 
     async def clarify(self, state):
+        with get_tracing().span("clarify", trace_id=state.get("run_id")):
+            return await self._clarify(state)
+
+    async def _clarify(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         request = dict(state.get("request") or {})
@@ -247,6 +260,10 @@ class Engine:
         return {"request": merged}
 
     async def plan(self, state):
+        with get_tracing().span("plan", trace_id=state.get("run_id")):
+            return await self._plan(state)
+
+    async def _plan(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         request = state.get("request") or {}
@@ -259,10 +276,15 @@ class Engine:
         return {"plan": plan, "round": 0}
 
     async def approve(self, state):
-        decision = interrupt({"kind": "approve_plan", "plan": state["plan"]})
-        return {"plan": decision["plan"]}
+        with get_tracing().span("approve", trace_id=state.get("run_id")):
+            decision = interrupt({"kind": "approve_plan", "plan": state["plan"]})
+            return {"plan": decision["plan"]}
 
     async def research(self, state):
+        with get_tracing().span("research", trace_id=state.get("run_id"), metadata={"round": state.get("round", 0)}):
+            return await self._research(state)
+
+    async def _research(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         plan = state["plan"]
@@ -303,6 +325,10 @@ class Engine:
         return {"results": state.get("results", []) + results, "gaps": []}
 
     async def gap_check(self, state):
+        with get_tracing().span("gap_check", trace_id=state.get("run_id")):
+            return await self._gap_check(state)
+
+    async def _gap_check(self, state):
         await self.gate(state["run_id"])
         evidence = self.store.evidence(state["run_id"])
         coverage = coverage_matrix(state["plan"], evidence)
@@ -320,12 +346,20 @@ class Engine:
             "gaps": gaps,
             "will_retry": more,
         })
+        tracing = get_tracing()
+        if coverage["total"]:
+            tracing.score("coverage_ratio", coverage["covered"] / coverage["total"], comment=f"{coverage['covered']}/{coverage['total']}")
+        tracing.update(coverage={"covered": coverage["covered"], "total": coverage["total"], "gaps": gaps})
         return {"gaps": gaps if more else [], "round": current_round + 1, "coverage": coverage}
 
     def route(self, state):
         return "research" if state.get("gaps") else "synthesize"
 
     async def synthesize(self, state):
+        with get_tracing().span("synthesize", trace_id=state.get("run_id")):
+            return await self._synthesize(state)
+
+    async def _synthesize(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         self.store.event(run["id"], "report.started", {})
@@ -333,14 +367,29 @@ class Engine:
         return {"bundle": bundle}
 
     async def verify(self, state):
+        with get_tracing().span("verify", trace_id=state.get("run_id")):
+            return await self._verify(state)
+
+    async def _verify(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         self.store.event(run["id"], "verify.started", {"mode": run["mode"]})
         bundle = await self.provider.verify(run, state["plan"], state["bundle"], self.store.evidence(run["id"]), lambda: self.gate(run["id"]))
         self.store.event(run["id"], "verify.finished", {"mode": run["mode"]})
+        counts = {}
+        for claim in bundle.get("claims") or []:
+            key = claim.get("verification") or "unconfirmed"
+            counts[key] = counts.get(key, 0) + 1
+        get_tracing().update(verify={"mode": run["mode"], "counts": counts})
+        for name, value in counts.items():
+            get_tracing().score(f"verify_{name}", value)
         return {"bundle": bundle}
 
     async def render(self, state):
+        with get_tracing().span("render", trace_id=state.get("run_id")):
+            return await self._render(state)
+
+    async def _render(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         evidence = self.store.evidence(run["id"])
@@ -351,6 +400,11 @@ class Engine:
         artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": verification_note(run["mode"]), "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
         self.store.add_artifact_version(run["id"], run["project_id"], artifact, origin="system")
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
+        tracing = get_tracing()
+        if coverage["total"]:
+            tracing.score("coverage_ratio", coverage["covered"] / coverage["total"])
+        tracing.score("supported_claims", supported)
+        tracing.update(coverage=coverage, verify={"supported": supported, "unknown": unknown, "claims": len(claims)})
         return {}
 
     def schedule(self, run_id, input):
@@ -360,6 +414,8 @@ class Engine:
         self.tasks[run_id] = asyncio.create_task(self.execute(run_id, input))
 
     async def execute(self, run_id, input):
+        tracing = get_tracing()
+        token = tracing.start(run_id, name="research-run", metadata={"run_id": run_id})
         try:
             async with self.run_slots:
                 await self.gate(run_id)
@@ -386,6 +442,9 @@ class Engine:
             else:
                 reason = f"{type(exc).__name__}：执行失败，请查看本地后台日志；已保存的证据保留。"
             self.store.update(run_id, status="failed", error=reason)
+        finally:
+            tracing.flush()
+            tracing.reset(token)
 
     async def shutdown(self):
         tasks = list(self.tasks.values())
