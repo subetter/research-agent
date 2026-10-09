@@ -23,6 +23,8 @@ class ResearchPlan(BaseModel):
     max_gap_rounds: int = Field(default=1, ge=0, le=2)
     as_of: str = Field(default="", max_length=40)
     regions: list[str] = Field(default_factory=list, max_length=8)
+    skill_name: str = Field(default="", max_length=80)
+    skill_version: str = Field(default="", max_length=20)
 
     @model_validator(mode="after")
     def clean_items(self):

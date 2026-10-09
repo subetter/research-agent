@@ -189,7 +189,8 @@ class Engine:
         plan = await self.provider.plan(run, request)
         plan = apply_plan_defaults(plan, request.get("question") or run["question"])
         self.store.update(run["id"], plan=plan)
-        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"], "as_of": plan.get("as_of"), "regions": plan.get("regions")})
+        self.store.event(run["id"], "skill.selected", {"skill_name": plan.get("skill_name"), "skill_version": plan.get("skill_version")})
+        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"], "as_of": plan.get("as_of"), "regions": plan.get("regions"), "skill_name": plan.get("skill_name"), "skill_version": plan.get("skill_version")})
         return {"plan": plan, "round": 0}
 
     async def approve(self, state):

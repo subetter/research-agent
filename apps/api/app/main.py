@@ -157,6 +157,10 @@ def create_app(config: Settings | None = None):
         next_plan = body.plan.model_dump()
         next_plan["max_search_calls"] = min(next_plan["max_search_calls"], config.max_search_calls)
         next_plan["max_gap_rounds"] = min(next_plan["max_gap_rounds"], config.max_gap_rounds)
+        current_plan = run.get("plan") or {}
+        if not next_plan.get("skill_name"):
+            next_plan["skill_name"] = current_plan.get("skill_name") or ""
+            next_plan["skill_version"] = current_plan.get("skill_version") or ""
         try:
             return store().update(run_id, body.expected_revision, plan=next_plan)
         except ValueError:
