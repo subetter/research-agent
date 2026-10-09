@@ -111,7 +111,8 @@ def create_app(config: Settings | None = None):
         return {"status": "ok", "mode": config.research_mode, "live_ready": config.live_ready,
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
-                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph"}
+                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
+                "mcp_enabled": config.mcp_enabled}
 
     @app.get("/api/projects")
     def projects(request: Request):

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     max_search_calls: int = Field(default=24, ge=1, le=60)
     max_gap_rounds: int = 1
     run_timeout_seconds: int = 600
+    mcp_enabled: bool = False
 
     @property
     def data_path(self) -> Path:

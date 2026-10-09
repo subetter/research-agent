@@ -43,6 +43,7 @@ bash scripts/dev.sh
 - UTF-8 TXT、Markdown、CSV 上传与本地关键词检索。
 - Markdown 报告与 CSV 导出；用户编辑会生成 origin=user 的新版本，被改过的结论回到待核验，导出可选版本，不会重新搜索。
 - 模型兼容接口与 Tavily 联网适配器，模型工具调用包含搜索、正文读取与项目检索。
+- 可选的独立 MCP 项目资料进程（`apps/mcp-server`，默认关闭）只读暴露 search_project / read_evidence；项目与所有者由启动方注入，核心写入不经过 MCP。
 
 ## 演示模式与联网模式
 
