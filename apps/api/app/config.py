@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     max_gap_rounds: int = 1
     run_timeout_seconds: int = 600
     mcp_enabled: bool = False
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = ""
+    langfuse_redact: str = ""
+
+    @property
+    def tracing_enabled(self) -> bool:
+        return bool(self.langfuse_public_key and self.langfuse_secret_key and self.langfuse_host)
 
     @property
     def data_path(self) -> Path:

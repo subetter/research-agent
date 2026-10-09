@@ -12,6 +12,7 @@ from .config import settings, Settings
 from .store import Store
 from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate, ArtifactEdit
 from .engine import Engine, coverage_matrix
+from .tracing import get_tracing, init_tracing
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
@@ -30,6 +31,7 @@ def create_app(config: Settings | None = None):
             store.conn.execute("UPDATE chat_messages SET status='failed',content=CASE WHEN content='' THEN '服务重启中断了生成；消息已保存，请重新提问。' ELSE content || char(10) || '服务重启中断了生成，以上内容已保存。' END WHERE status='pending'")
         async with AsyncSqliteSaver.from_conn_string(str(config.data_path / "checkpoints.sqlite")) as saver:
             app.state.store = store
+            app.state.tracing = init_tracing(config)
             app.state.engine = Engine(config, store, saver)
             # A local single-process server never silently restarts billable calls.
             for run in store.query("SELECT * FROM runs WHERE status IN ('running','planning','pause_requested','cancel_requested')"):
@@ -104,6 +106,7 @@ def create_app(config: Settings | None = None):
             versions = store().list_artifact_versions(run_id)
         run["artifact_versions"] = versions
         run["artifact_version"] = versions[-1]["version"] if versions else None
+        run["trace_url"] = get_tracing().trace_url(run_id)
         return run
 
     @app.get("/api/health")
@@ -112,7 +115,7 @@ def create_app(config: Settings | None = None):
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
                 "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
-                "mcp_enabled": config.mcp_enabled}
+                "mcp_enabled": config.mcp_enabled, "tracing_enabled": config.tracing_enabled}
 
     @app.get("/api/projects")
     def projects(request: Request):

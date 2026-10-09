@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from .store import uid, now
 from .llm import complete, stream_complete
+from .tracing import get_tracing
 
 
 class ConversationCreate(BaseModel):
@@ -87,6 +88,8 @@ def conversation_router(store_getter, config):
                 reply = ""
                 tokens = 0
                 checkpoint = time.monotonic()
+                tracing = get_tracing()
+                token = tracing.start(conversation_id, name="chat-conversation", metadata={"conversation_id": conversation_id, "stream": True})
                 def snapshot():
                     return {"conversation": get(conversation_id), "messages": history(conversation_id)}
                 def encode(event, data):
@@ -96,40 +99,41 @@ def conversation_router(store_getter, config):
                         store.conn.execute("UPDATE chat_messages SET content=?,status=?,tokens=? WHERE id=?", (reply, status, tokens, assistant_id))
                         store.conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now(), conversation_id))
                 try:
-                    yield encode("start", snapshot())
-                    prior = [m for m in history(conversation_id) if m["status"] == "completed"]
-                    if mode == "demo":
-                        previous = [m["content"] for m in prior if m["role"] == "user"]
-                        text = f"【演示回复 · 未调用真实模型】\n\n收到你的问题：{content}\n\n这是本会话的第 {len(previous)} 次提问。"
-                        if len(previous) > 1:
-                            text += f"上一条问题是「{previous[-2][:120]}」。"
-                        text += "\n\n配置模型密钥后，可使用真实的多轮流式问答。"
-                        async def chunks():
-                            for index in range(0, len(text), 8):
-                                await asyncio.sleep(.025)
-                                yield {"text": text[index:index+8]}
-                        source = chunks()
-                    else:
-                        context = []
-                        size = 0
-                        for message in reversed(prior[-30:]):
-                            if size + len(message["content"]) > 30000:
-                                break
-                            context.append({"role": message["role"], "content": message["content"]})
-                            size += len(message["content"])
-                        model_messages = [{"role": "system", "content": "你是研究工作台的日常会话助手。结合当前会话上下文，用中文清楚回答。没有搜索工具，不要声称浏览或验证了实时资料。"}, *reversed(context)]
-                        source = stream_complete(config, model_messages)
-                    async for chunk in source:
-                        if "tokens" in chunk:
-                            tokens = chunk["tokens"]
-                        if chunk.get("text"):
-                            reply += chunk["text"]
-                            if time.monotonic() - checkpoint > .2:
-                                save("pending")
-                                checkpoint = time.monotonic()
-                            yield encode("delta", {"id": assistant_id, "text": chunk["text"]})
-                    save("completed")
-                    yield encode("done", snapshot())
+                    with tracing.span("chat.turn", trace_id=conversation_id, metadata={"assistant_id": assistant_id, "mode": mode}):
+                        yield encode("start", snapshot())
+                        prior = [m for m in history(conversation_id) if m["status"] == "completed"]
+                        if mode == "demo":
+                            previous = [m["content"] for m in prior if m["role"] == "user"]
+                            text = f"【演示回复 · 未调用真实模型】\n\n收到你的问题：{content}\n\n这是本会话的第 {len(previous)} 次提问。"
+                            if len(previous) > 1:
+                                text += f"上一条问题是「{previous[-2][:120]}」。"
+                            text += "\n\n配置模型密钥后，可使用真实的多轮流式问答。"
+                            async def chunks():
+                                for index in range(0, len(text), 8):
+                                    await asyncio.sleep(.025)
+                                    yield {"text": text[index:index+8]}
+                            source = chunks()
+                        else:
+                            context = []
+                            size = 0
+                            for message in reversed(prior[-30:]):
+                                if size + len(message["content"]) > 30000:
+                                    break
+                                context.append({"role": message["role"], "content": message["content"]})
+                                size += len(message["content"])
+                            model_messages = [{"role": "system", "content": "你是研究工作台的日常会话助手。结合当前会话上下文，用中文清楚回答。没有搜索工具，不要声称浏览或验证了实时资料。"}, *reversed(context)]
+                            source = stream_complete(config, model_messages)
+                        async for chunk in source:
+                            if "tokens" in chunk:
+                                tokens = chunk["tokens"]
+                            if chunk.get("text"):
+                                reply += chunk["text"]
+                                if time.monotonic() - checkpoint > .2:
+                                    save("pending")
+                                    checkpoint = time.monotonic()
+                                yield encode("delta", {"id": assistant_id, "text": chunk["text"]})
+                        save("completed")
+                        yield encode("done", snapshot())
                 except BaseException as exc:
                     failure = str(exc) if isinstance(exc, ValueError) else "生成连接中断；已保存收到的内容，请重新提问。"
                     reply = (reply + "\n\n" + failure) if reply else failure
@@ -137,42 +141,50 @@ def conversation_router(store_getter, config):
                     if isinstance(exc, (asyncio.CancelledError, GeneratorExit)):
                         raise
                     yield encode("error", {"message": failure, **snapshot()})
+                finally:
+                    tracing.flush()
+                    tracing.reset(token)
             return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+        tracing = get_tracing()
+        token = tracing.start(conversation_id, name="chat-conversation", metadata={"conversation_id": conversation_id, "stream": False})
         try:
-            prior = [m for m in history(conversation_id) if m["status"] == "completed"]
-            if mode == "demo":
-                await asyncio.sleep(0.4)
-                previous = [m["content"] for m in prior if m["role"] == "user"]
-                reply = f"【演示回复 · 未调用真实模型】\n\n收到你的问题：{content}\n\n这是本会话的第 {len(previous)} 次提问。"
-                if len(previous) > 1:
-                    reply += f"上一条问题是「{previous[-2][:120]}」，它与当前消息都已保存在同一个会话中。"
-                reply += "\n\n配置模型密钥后，这里会使用会话上下文生成真实回答。普通会话不执行深度研究或联网搜索。"
-                tokens = 0
-            else:
-                # Bound the history by a character budget and keep the latest user message.
-                context = []
-                size = 0
-                for message in reversed(prior[-30:]):
-                    if size + len(message["content"]) > 30000:
-                        break
-                    context.append({"role": message["role"], "content": message["content"]})
-                    size += len(message["content"])
-                messages = [{"role": "system", "content": "你是研究工作台的日常会话助手。结合当前会话上下文，用中文清楚回答。此会话没有搜索工具，不要声称浏览或验证了实时资料。"}, *reversed(context)]
-                result = await complete(config, messages)
-                reply = result["choices"][0]["message"].get("content")
-                if not isinstance(reply, str) or not reply.strip():
-                    raise ValueError("模型返回空消息")
-                tokens = result.get("usage", {}).get("total_tokens", 0)
-            with store.lock, store.conn:
-                store.conn.execute("UPDATE chat_messages SET content=?,status='completed',tokens=? WHERE id=?", (reply, tokens, assistant_id))
-                store.conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now(), conversation_id))
+            with tracing.span("chat.turn", trace_id=conversation_id, metadata={"assistant_id": assistant_id, "mode": mode}):
+                prior = [m for m in history(conversation_id) if m["status"] == "completed"]
+                if mode == "demo":
+                    await asyncio.sleep(0.4)
+                    previous = [m["content"] for m in prior if m["role"] == "user"]
+                    reply = f"【演示回复 · 未调用真实模型】\n\n收到你的问题：{content}\n\n这是本会话的第 {len(previous)} 次提问。"
+                    if len(previous) > 1:
+                        reply += f"上一条问题是「{previous[-2][:120]}」，它与当前消息都已保存在同一个会话中。"
+                    reply += "\n\n配置模型密钥后，这里会使用会话上下文生成真实回答。普通会话不执行深度研究或联网搜索。"
+                    tokens = 0
+                else:
+                    context = []
+                    size = 0
+                    for message in reversed(prior[-30:]):
+                        if size + len(message["content"]) > 30000:
+                            break
+                        context.append({"role": message["role"], "content": message["content"]})
+                        size += len(message["content"])
+                    messages = [{"role": "system", "content": "你是研究工作台的日常会话助手。结合当前会话上下文，用中文清楚回答。此会话没有搜索工具，不要声称浏览或验证了实时资料。"}, *reversed(context)]
+                    result = await complete(config, messages)
+                    reply = result["choices"][0]["message"].get("content")
+                    if not isinstance(reply, str) or not reply.strip():
+                        raise ValueError("模型返回空消息")
+                    tokens = result.get("usage", {}).get("total_tokens", 0)
+                with store.lock, store.conn:
+                    store.conn.execute("UPDATE chat_messages SET content=?,status='completed',tokens=? WHERE id=?", (reply, tokens, assistant_id))
+                    store.conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now(), conversation_id))
         except BaseException as exc:
             failure = str(exc) if isinstance(exc, ValueError) else "回复生成失败；用户消息已保存。可重新提问，或检查模型配置。"
             with store.lock, store.conn:
                 store.conn.execute("UPDATE chat_messages SET content=?,status='failed' WHERE id=?", (failure, assistant_id))
             if isinstance(exc, asyncio.CancelledError):
                 raise
+        finally:
+            tracing.flush()
+            tracing.reset(token)
         return {"conversation": get(conversation_id), "messages": history(conversation_id)}
 
     return router
