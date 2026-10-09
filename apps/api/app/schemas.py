@@ -23,6 +23,8 @@ class ResearchPlan(BaseModel):
     max_gap_rounds: int = Field(default=1, ge=0, le=2)
     as_of: str = Field(default="", max_length=40)
     regions: list[str] = Field(default_factory=list, max_length=8)
+    skill_name: str = Field(default="", max_length=80)
+    skill_version: str = Field(default="", max_length=20)
 
     @model_validator(mode="after")
     def clean_items(self):
@@ -58,6 +60,18 @@ class ClarifyUpdate(BaseModel):
 
 class DocumentUpdate(BaseModel):
     citable: bool
+
+
+class ClaimEdit(BaseModel):
+    id: str
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class ArtifactEdit(BaseModel):
+    expected_revision: int
+    base_version: int = Field(ge=1)
+    summary: str | None = Field(default=None, max_length=3000)
+    claims: list[ClaimEdit] = Field(default_factory=list, max_length=100)
 
 
 class RunCommand(BaseModel):

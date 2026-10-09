@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
-from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate
+from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate, ArtifactEdit
 from .engine import Engine, coverage_matrix
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
@@ -98,6 +98,12 @@ def create_app(config: Settings | None = None):
         run["waiting"] = plan.get("waiting") if run["status"] == "waiting_input" else None
         if plan.get("subjects") and plan.get("dimensions"):
             run["coverage"] = coverage_matrix(plan, store().evidence(run_id))
+        versions = store().list_artifact_versions(run_id)
+        if not versions and run.get("artifact"):
+            store().add_artifact_version(run_id, run["project_id"], run["artifact"], origin="system")
+            versions = store().list_artifact_versions(run_id)
+        run["artifact_versions"] = versions
+        run["artifact_version"] = versions[-1]["version"] if versions else None
         return run
 
     @app.get("/api/health")
@@ -105,7 +111,8 @@ def create_app(config: Settings | None = None):
         return {"status": "ok", "mode": config.research_mode, "live_ready": config.live_ready,
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
-                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph"}
+                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
+                "mcp_enabled": config.mcp_enabled}
 
     @app.get("/api/projects")
     def projects(request: Request):
@@ -157,6 +164,10 @@ def create_app(config: Settings | None = None):
         next_plan = body.plan.model_dump()
         next_plan["max_search_calls"] = min(next_plan["max_search_calls"], config.max_search_calls)
         next_plan["max_gap_rounds"] = min(next_plan["max_gap_rounds"], config.max_gap_rounds)
+        current_plan = run.get("plan") or {}
+        if not next_plan.get("skill_name"):
+            next_plan["skill_name"] = current_plan.get("skill_name") or ""
+            next_plan["skill_version"] = current_plan.get("skill_version") or ""
         try:
             return store().update(run_id, body.expected_revision, plan=next_plan)
         except ValueError:
@@ -262,10 +273,69 @@ def create_app(config: Settings | None = None):
         document.pop("content", None)
         return document
 
-    @app.get("/api/runs/{run_id}/export")
-    def export(run_id: str, format: str = "markdown"):
+    @app.get("/api/runs/{run_id}/artifacts")
+    def artifacts(run_id: str):
         run = get_run(run_id)
-        artifact = run["artifact"]
+        return run["artifact_versions"]
+
+    @app.get("/api/runs/{run_id}/artifacts/{version}")
+    def artifact_version(run_id: str, version: int):
+        get_run(run_id)
+        row = store().get_artifact_version(run_id, version)
+        if not row:
+            raise HTTPException(404, "成果版本不存在")
+        return row
+
+    @app.patch("/api/runs/{run_id}/artifact")
+    def edit_artifact(run_id: str, body: ArtifactEdit):
+        run = get_run(run_id)
+        if not run.get("artifact"):
+            raise HTTPException(409, "尚未生成成果")
+        if run["status"] not in {"completed", "partial"}:
+            raise HTTPException(409, "仅可编辑已交付的成果")
+        base = store().get_artifact_version(run_id, body.base_version)
+        if not base:
+            raise HTTPException(404, "成果版本不存在")
+        content = json.loads(json.dumps(base["content"]))
+        if body.summary is not None:
+            content["summary"] = body.summary
+        by_id = {claim["id"]: claim for claim in content.get("claims") or []}
+        for edit in body.claims:
+            claim = by_id.get(edit.id)
+            if not claim:
+                raise HTTPException(404, "结论不存在")
+            if claim.get("text") == edit.text:
+                continue
+            claim["text"] = edit.text
+            claim["verification"] = "unconfirmed"
+        claims = content.get("claims") or []
+        coverage = content.get("coverage") or {}
+        content["metrics"] = {
+            "claims": len(claims),
+            "evidence": content.get("metrics", {}).get("evidence", 0),
+            "unknown": sum(item.get("kind") == "unknown" for item in claims),
+            "with_references": sum(bool(item.get("evidence_ids")) for item in claims),
+            "supported": sum(item.get("verification") in {"fully", "partial", "reference_checked"} for item in claims),
+            "cells_covered": coverage.get("covered", 0),
+            "cells_total": coverage.get("total", 0),
+        }
+        store().add_artifact_version(run_id, run["project_id"], content, origin="user", parent_version_id=base["id"])
+        try:
+            store().update(run_id, body.expected_revision, artifact=content)
+        except ValueError:
+            raise HTTPException(409, "状态已更新，请刷新后重试")
+        return get_run(run_id)
+
+    @app.get("/api/runs/{run_id}/export")
+    def export(run_id: str, format: str = "markdown", version: int | None = None):
+        run = get_run(run_id)
+        if version is not None:
+            row = store().get_artifact_version(run_id, version)
+            if not row:
+                raise HTTPException(404, "成果版本不存在")
+            artifact = row["content"]
+        else:
+            artifact = run["artifact"]
         if not artifact:
             raise HTTPException(409, "尚未生成成果")
         if format == "csv":
