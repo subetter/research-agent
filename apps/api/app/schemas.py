@@ -62,6 +62,18 @@ class DocumentUpdate(BaseModel):
     citable: bool
 
 
+class ClaimEdit(BaseModel):
+    id: str
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class ArtifactEdit(BaseModel):
+    expected_revision: int
+    base_version: int = Field(ge=1)
+    summary: str | None = Field(default=None, max_length=3000)
+    claims: list[ClaimEdit] = Field(default_factory=list, max_length=100)
+
+
 class RunCommand(BaseModel):
     action: Literal["start", "pause", "resume", "cancel", "retry"]
     expected_revision: int

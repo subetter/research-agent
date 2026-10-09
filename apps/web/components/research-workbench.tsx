@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ArrowUp, BookOpen, ChevronRight, Compass, Download, FileText, FlaskConical, Layers, Loader2, Pause, Play, Plus, Search, ShieldCheck, Square, Upload, X, Activity, Check, Settings2 } from "lucide-react";
+import { ArrowUpRight, ArrowUp, BookOpen, ChevronRight, Compass, Download, FileText, FlaskConical, Layers, Loader2, Pause, Pencil, Play, Plus, Search, ShieldCheck, Square, Upload, X, Activity, Check, Settings2 } from "lucide-react";
 
 import { api } from "./api";
 
@@ -11,12 +11,14 @@ type Claim = {id: string; subject: string; dimension: string; text: string; evid
 type Evidence = {id: string; title: string; url: string; quote: string; locator: string; source_type: string; fetched_at: string; dimensions?: string[]; citation_role?: string};
 type CoverageCell = {subject: string; dimension: string; evidence_ids: string[]; covered: boolean};
 type Coverage = {subjects: string[]; dimensions: string[]; cells: CoverageCell[]; covered: number; total: number; gaps: {subject: string; dimension: string}[]};
-type Run = {budget?: {model_limit: number; report_reserved: number; search_limit: number}; coverage?: Coverage | null; waiting?: string | null; id: string; question: string; status: string; revision: number; mode: string; plan: Plan; error: string | null; artifact: {title: string; summary: string; claims: Claim[]; verification_note: string; coverage?: Coverage; metrics: {claims: number; evidence: number; unknown: number; with_references: number; cells_covered?: number; cells_total?: number}} | null; usage?: {kind: string; calls: number; tokens: number}[]};
+type Artifact = {title: string; summary: string; claims: Claim[]; verification_note: string; coverage?: Coverage; metrics: {claims: number; evidence: number; unknown: number; with_references: number; cells_covered?: number; cells_total?: number}};
+type ArtifactVersion = {id: string; version: number; origin: string; created_at: string; parent_version_id?: string | null};
+type Run = {budget?: {model_limit: number; report_reserved: number; search_limit: number}; coverage?: Coverage | null; waiting?: string | null; id: string; question: string; status: string; revision: number; mode: string; plan: Plan; error: string | null; artifact: Artifact | null; artifact_version?: number | null; artifact_versions?: ArtifactVersion[]; usage?: {kind: string; calls: number; tokens: number}[]};
 type Event = {seq: number; type: string; payload: Record<string, unknown>; created_at: string};
 type Doc = {id: string; name: string; characters: number; citable?: boolean};
 const terminal = new Set(["completed", "partial", "cancelled", "failed"]);
 const statusText: Record<string, string> = {planning: "正在规划", waiting_input: "等待确认", running: "研究进行中", pause_requested: "正在暂停", paused: "已暂停", cancel_requested: "正在取消", cancelled: "已取消", completed: "已完成", partial: "部分交付", failed: "执行失败"};
-const eventText: Record<string, string> = {"budget.reached": "研究预算已达上限，转入报告阶段", "run.created": "创建研究", "plan.started": "拆解研究目标", "skill.selected": "选用研究方法", "plan.proposed": "研究计划已生成", "run.waiting_input": "等待你确认", "run.running": "研究已启动", "task.started": "研究员开始调查", "task.finished": "研究员完成调查", "task.reused": "复用已有研究证据", "evidence.created": "保存原文证据", "tool.started": "调用研究工具", "tool.finished": "工具调用完成", "coverage.cell_filled": "覆盖格子已填上", "coverage.checked": "检查研究覆盖", "report.started": "综合分析与写作", "verify.started": "对照原文核验引用", "verify.finished": "引用核验完成", "model.finished": "模型调用完成", "run.completed": "成果已交付", "run.partial": "交付已有研究结果", "run.paused": "已保存进度", "task.failed": "子任务失败", "run.failed": "任务执行失败"};
+const eventText: Record<string, string> = {"budget.reached": "研究预算已达上限，转入报告阶段", "run.created": "创建研究", "plan.started": "拆解研究目标", "skill.selected": "选用研究方法", "plan.proposed": "研究计划已生成", "run.waiting_input": "等待你确认", "run.running": "研究已启动", "task.started": "研究员开始调查", "task.finished": "研究员完成调查", "task.reused": "复用已有研究证据", "evidence.created": "保存原文证据", "tool.started": "调用研究工具", "tool.finished": "工具调用完成", "coverage.cell_filled": "覆盖格子已填上", "coverage.checked": "检查研究覆盖", "report.started": "综合分析与写作", "verify.started": "对照原文核验引用", "verify.finished": "引用核验完成", "model.finished": "模型调用完成", "artifact.created": "生成成果版本", "artifact.edited": "保存编辑后的成果版本", "run.completed": "成果已交付", "run.partial": "交付已有研究结果", "run.paused": "已保存进度", "task.failed": "子任务失败", "run.failed": "任务执行失败"};
 const skillTitle: Record<string, string> = {competitor_analysis: "竞品分析", industry_landscape: "行业格局", research_report: "综合研究报告"};
 const toolText: Record<string, string> = {search_web: "搜索网页", read_source: "阅读原文", search_project: "检索项目资料", cite_project: "选用项目段落"};
 const verificationText: Record<string, string> = {reference_checked: "引用已核对", fully: "原文支持", partial: "部分支持", contradicted: "原文矛盾", unrelated: "原文无关", unconfirmed: "待确认"};
@@ -47,6 +49,11 @@ export default function Workbench() {
   const [streamEpoch, setStreamEpoch] = useState(0);
   const [draftSubjects, setDraftSubjects] = useState("");
   const [draftDimensions, setDraftDimensions] = useState("");
+  const [viewVersion, setViewVersion] = useState<number | null>(null);
+  const [viewedArtifact, setViewedArtifact] = useState<Artifact | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftSummary, setDraftSummary] = useState("");
+  const [draftClaims, setDraftClaims] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
   const lastSeqRef = useRef(0);
   const selectedProject = projects.find(p => p.id === projectId);
@@ -87,6 +94,7 @@ export default function Workbench() {
   useEffect(() => {
     lastSeqRef.current = 0;
     setRun(null); setEvidence([]); setEvents([]); setSelectedEvidence(null);
+    setViewVersion(null); setViewedArtifact(null); setEditing(false); setDraftSummary(""); setDraftClaims({});
   }, [runId]);
 
   useEffect(() => {
@@ -187,6 +195,7 @@ export default function Workbench() {
     const payload = item.payload;
     const tool = typeof payload.tool === "string" ? (toolText[payload.tool] || payload.tool) : "";
     const target = typeof payload.target === "string" ? payload.target : typeof payload.query === "string" ? payload.query : typeof payload.url === "string" ? payload.url : "";
+    if ((item.type === "artifact.created" || item.type === "artifact.edited") && typeof payload.version === "number") return `v${payload.version} · ${payload.origin === "user" ? "你编辑的" : "系统生成"}`;
     if ((item.type === "skill.selected" || item.type === "plan.proposed") && typeof payload.skill_name === "string" && payload.skill_name) return `${skillTitle[payload.skill_name] || payload.skill_name} · v${payload.skill_version || ""}`.trim();
     if (item.type === "coverage.cell_filled" && typeof payload.subject === "string") return `${payload.subject} · ${payload.dimension}（${payload.covered}/${payload.total}）`;
     if (item.type.startsWith("tool.") && (tool || target)) return [tool, target].filter(Boolean).join(" · ");
@@ -198,6 +207,49 @@ export default function Workbench() {
     if (typeof payload.cells_covered === "number" && typeof payload.cells_total === "number") return `覆盖 ${payload.cells_covered}/${payload.cells_total} 个对象×维度`;
     return "";
   };
+  const artifactVersions = run?.artifact_versions || [];
+  const latestVersion = run?.artifact_version ?? (artifactVersions.length ? artifactVersions[artifactVersions.length - 1].version : null);
+  const selectedVersion = viewVersion ?? latestVersion;
+  const displayedArtifact = selectedVersion && latestVersion && selectedVersion !== latestVersion ? viewedArtifact : run?.artifact || null;
+  const exportQuery = selectedVersion ? `&version=${selectedVersion}` : "";
+
+  useEffect(() => {
+    if (!runId || !selectedVersion || !latestVersion || selectedVersion === latestVersion) {
+      setViewedArtifact(null);
+      return;
+    }
+    let cancelled = false;
+    api<{content: Artifact}>(`/runs/${runId}/artifacts/${selectedVersion}`).then(row => {
+      if (!cancelled) setViewedArtifact(row.content);
+    }).catch(e => {if (!cancelled) setError(e.message);});
+    return () => {cancelled = true;};
+  }, [runId, selectedVersion, latestVersion]);
+
+  function beginEdit() {
+    if (!run?.artifact) return;
+    setViewVersion(latestVersion);
+    setEditing(true);
+    setDraftSummary(run.artifact.summary);
+    setDraftClaims(Object.fromEntries(run.artifact.claims.map(claim => [claim.id, claim.text])));
+  }
+
+  async function saveArtifact() {
+    if (!run || latestVersion == null) return;
+    await action(async () => {
+      const updated = await api<Run>(`/runs/${run.id}/artifact`, {method: "PATCH", body: JSON.stringify({
+        expected_revision: run.revision,
+        base_version: latestVersion,
+        summary: draftSummary,
+        claims: run.artifact?.claims.map(claim => ({id: claim.id, text: draftClaims[claim.id] ?? claim.text})) || [],
+      })});
+      if (selectedRunRef.current === run.id) {
+        setRun(updated);
+        setViewVersion(updated.artifact_version ?? null);
+        setEditing(false);
+      }
+    });
+  }
+
   const groupedTrail = planSubjects.map(subject => ({
     subject,
     items: events.filter(item => item.payload.subject === subject),
@@ -232,8 +284,8 @@ export default function Workbench() {
             {run.status === "waiting_input" && !clarifying && <div className="plan-card"><div className="plan-header"><div className="plan-icon"><Settings2 size={19}/></div><div><h3>先对齐研究方向</h3><p>确认对象与比较维度后，研究员将开始并行探索。</p></div></div><label>研究对象<input value={draftSubjects} onChange={e => setDraftSubjects(e.target.value)} aria-label="计划研究对象"/></label><label>比较维度<input value={draftDimensions} onChange={e => setDraftDimensions(e.target.value)} aria-label="计划比较维度"/></label><div className="plan-defaults">{run.plan.skill_name && <div className="plan-skill">研究方法：{skillTitle[run.plan.skill_name] || run.plan.skill_name} · v{run.plan.skill_version}</div>}默认范围：截至 {run.plan.as_of || "提交日"} · 地区 {(run.plan.regions || ["未限定"]).join("、")}</div><div className="plan-footer"><span>最多 {run.plan.max_search_calls} 次搜索 · {run.plan.max_gap_rounds} 轮补充研究</span><button className="primary" disabled={busy} onClick={() => command("start")}><Play size={14}/> 确认并开始研究</button></div></div>}
             {running && <div className="progress-card"><div className="progress-top"><span className="pulse-dot"/><strong>{run.status === "planning" ? "正在制定研究计划" : events.some(e => e.type === "verify.started") ? "正在对照原文核验引用" : events.some(e => e.type === "report.started") ? "正在综合证据与生成报告" : "正在收集与验证研究证据"}</strong><span>{evidence.length} 条证据</span></div><div className="progress-track"><span style={{width: `${Math.min(100, (taskDone / Math.max(1, planSubjects.length || 1)) * 100)}%`}}/></div><p>{events.length ? `${eventText[events[events.length - 1].type] || events[events.length - 1].type}${eventDetail(events[events.length - 1]) ? ` · ${eventDetail(events[events.length - 1])}` : ""}` : "任务已进入后台"} · 完成 {taskDone} 个研究子任务</p><div className="subject-trail">{groupedTrail.map(group => {const last = group.items[group.items.length - 1]; return <div key={group.subject}><strong>{group.subject}</strong><p>{last ? `${eventText[last.type] || last.type}${eventDetail(last) ? ` · ${eventDetail(last)}` : ""}` : "等待开始"}</p><ol>{group.items.filter(item => item.type.startsWith("tool.") || item.type === "coverage.cell_filled" || item.type === "evidence.created").slice(-5).map(item => <li key={item.seq}>{eventText[item.type] || item.type}{eventDetail(item) ? ` · ${eventDetail(item)}` : ""}</li>)}</ol></div>;})}</div></div>}
             <div className="tabs">{[{id: "report", text: "研究报告", icon: <FileText size={15}/>}, {id: "table", text: "对比表", icon: <Layers size={15}/>}, {id: "sources", text: `证据来源 ${evidence.length}`, icon: <BookOpen size={15}/>}, {id: "trace", text: "执行轨迹", icon: <Activity size={15}/>}].map(t => <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id as typeof tab)}>{t.icon}{t.text}</button>)}</div>
-            {tab === "report" && (run.artifact ? <div className="report"><div className="report-toolbar"><span><Check size={14}/> 成果已保存</span><a href={`/api/runs/${run.id}/export?format=markdown`}><Download size={14}/> 导出报告</a></div><p className="report-summary">{run.artifact.summary}</p><div className="metric-row"><div><strong>{run.artifact.metrics.claims}</strong><span>研究条目</span></div><div><strong>{run.artifact.metrics.evidence}</strong><span>原文证据</span></div><div><strong>{run.artifact.metrics.unknown}</strong><span>待确认项</span></div></div>{planSubjects.map(subject => <section className="report-subject" key={subject}><h2>{subject}</h2>{run.artifact?.claims.filter(c => c.subject === subject).map(c => <div className="claim" key={c.id}><h3>{c.dimension}<span className={c.kind}>{c.kind === "fact" ? "事实" : c.kind === "analysis" ? "分析" : "待确认"}</span><span className={`verify ${c.verification}`}>{verificationText[c.verification] || c.verification}</span></h3><p>{c.text}</p><div className="references">{c.evidence_ids.map((id, i) => <button key={id} onClick={() => setSelectedEvidence(evidence.find(e => e.id === id) || null)}><BookOpen size={12}/> 原文证据 {i + 1}</button>)}</div></div>)}</section>)}<p className="footnote"><ShieldCheck size={14}/>{run.artifact.verification_note}</p></div> : <div className="pending-output"><FileText size={27}/><h3>研究完成后，洞察将在这里汇集</h3><p>你可以先查看证据来源与执行轨迹。</p></div>)}
-            {tab === "table" && (run.artifact ? <div className="comparison"><div className="report-toolbar"><span>与报告共享同一批结论</span><a href={`/api/runs/${run.id}/export?format=csv`}><Download size={14}/> 导出 CSV</a></div><div className="table-scroll"><table><thead><tr><th>比较维度</th>{planSubjects.map(s => <th key={s}>{s}</th>)}</tr></thead><tbody>{(run.plan.dimensions || []).map(d => <tr key={d}><th>{d}</th>{planSubjects.map(s => {const c = run.artifact?.claims.find(c => c.subject === s && c.dimension === d); return <td key={s}>{c?.text || "未确认"}{c?.evidence_ids.map(id => <button className="table-reference" key={id} onClick={() => setSelectedEvidence(evidence.find(e => e.id === id) || null)}>查看证据 ↗</button>)}</td>;})}</tr>)}</tbody></table></div></div> : <div className="pending-output">报告生成后可查看结构化对比表</div>)}
+            {tab === "report" && (displayedArtifact ? <div className="report"><div className="report-toolbar"><span><Check size={14}/> 成果已保存</span>{artifactVersions.length > 0 && <label className="version-picker">版本<select aria-label="成果版本" value={selectedVersion ?? ""} onChange={e => {setEditing(false); setViewVersion(Number(e.target.value));}}>{artifactVersions.map(item => <option key={item.id} value={item.version}>v{item.version} · {item.origin === "user" ? "你编辑的" : "系统生成"}</option>)}</select></label>}{run.artifact && ["completed", "partial"].includes(run.status) && !editing && <button className="secondary small" onClick={beginEdit}><Pencil size={13}/> 编辑结论</button>}{editing && <><button className="primary small" disabled={busy} onClick={saveArtifact}>保存为新版本</button><button className="secondary small" onClick={() => setEditing(false)}>取消</button></>}<a href={`/api/runs/${run.id}/export?format=markdown${exportQuery}`}><Download size={14}/> 导出报告</a></div>{editing ? <textarea aria-label="编辑报告摘要" className="artifact-edit" value={draftSummary} onChange={e => setDraftSummary(e.target.value)}/> : <p className="report-summary">{displayedArtifact.summary}</p>}<div className="metric-row"><div><strong>{displayedArtifact.metrics.claims}</strong><span>研究条目</span></div><div><strong>{displayedArtifact.metrics.evidence}</strong><span>原文证据</span></div><div><strong>{displayedArtifact.metrics.unknown}</strong><span>待确认项</span></div></div>{planSubjects.map(subject => <section className="report-subject" key={subject}><h2>{subject}</h2>{displayedArtifact.claims.filter(c => c.subject === subject).map(c => <div className="claim" key={c.id}><h3>{c.dimension}<span className={c.kind}>{c.kind === "fact" ? "事实" : c.kind === "analysis" ? "分析" : "待确认"}</span><span className={`verify ${c.verification}`}>{verificationText[c.verification] || c.verification}</span></h3>{editing ? <textarea aria-label={`编辑${c.subject}的${c.dimension}`} className="artifact-edit" value={draftClaims[c.id] ?? c.text} onChange={e => setDraftClaims(current => ({...current, [c.id]: e.target.value}))}/> : <p>{c.text}</p>}<div className="references">{c.evidence_ids.map((id, i) => <button key={id} onClick={() => setSelectedEvidence(evidence.find(e => e.id === id) || null)}><BookOpen size={12}/> 原文证据 {i + 1}</button>)}</div></div>)}</section>)}<p className="footnote"><ShieldCheck size={14}/>{displayedArtifact.verification_note}{editing && " 编辑事实后该条回到待核验，不会重新搜索。"}</p></div> : <div className="pending-output"><FileText size={27}/><h3>研究完成后，洞察将在这里汇集</h3><p>你可以先查看证据来源与执行轨迹。</p></div>)}
+            {tab === "table" && (displayedArtifact ? <div className="comparison"><div className="report-toolbar"><span>与报告共享同一批结论</span><a href={`/api/runs/${run.id}/export?format=csv${exportQuery}`}><Download size={14}/> 导出 CSV</a></div><div className="table-scroll"><table><thead><tr><th>比较维度</th>{planSubjects.map(s => <th key={s}>{s}</th>)}</tr></thead><tbody>{(run.plan.dimensions || []).map(d => <tr key={d}><th>{d}</th>{planSubjects.map(s => {const c = displayedArtifact.claims.find(c => c.subject === s && c.dimension === d); return <td key={s}>{c?.text || "未确认"}{c?.evidence_ids.map(id => <button className="table-reference" key={id} onClick={() => setSelectedEvidence(evidence.find(e => e.id === id) || null)}>查看证据 ↗</button>)}</td>;})}</tr>)}</tbody></table></div></div> : <div className="pending-output">报告生成后可查看结构化对比表</div>)}
             {tab === "sources" && <div className="source-list">{evidence.map((e, i) => <button key={e.id} className="source-card" onClick={() => setSelectedEvidence(e)}><span className="source-index">{String(i + 1).padStart(2, "0")}</span><div><h3>{e.title}</h3><p>{e.quote.slice(0, 110)}</p><small>{e.source_type === "demo" ? "模拟来源" : e.source_type === "web" ? "互联网来源" : e.citation_role === "fact" ? "项目资料 · 可引用事实" : "项目资料 · 分析口径"} · {e.locator}</small></div><ArrowUpRight size={16}/></button>)}{!evidence.length && <div className="pending-output">研究员读取原文或选用项目段落后，证据会保存在这里。</div>}</div>}
             {tab === "trace" && <div className="timeline">{groupedTrail.map(group => <div className="trail-group" key={group.subject}><h3>{group.subject}</h3>{group.items.map(e => <div className="timeline-item" key={e.seq}><span className="timeline-dot"/><div><strong>{eventText[e.type] || statusText[e.type.replace("run.", "")] || e.type}</strong><p>{eventDetail(e)}</p><code>{e.type}</code></div><time>{new Date(e.created_at).toLocaleTimeString("zh-CN", {hour12: false})}</time></div>)}{!group.items.length && <p className="nav-empty">该对象尚无事件</p>}</div>)}{!!generalTrail.length && <div className="trail-group"><h3>任务</h3>{generalTrail.map(e => <div className="timeline-item" key={e.seq}><span className="timeline-dot"/><div><strong>{eventText[e.type] || statusText[e.type.replace("run.", "")] || e.type}</strong><p>{eventDetail(e)}</p><code>{e.type}</code></div><time>{new Date(e.created_at).toLocaleTimeString("zh-CN", {hour12: false})}</time></div>)}</div>}{!events.length && <p>暂无执行事件</p>}</div>}
           </div>}

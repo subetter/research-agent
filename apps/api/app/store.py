@@ -128,6 +128,7 @@ class Store:
             self.conn.execute("CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id)")
             self._migrate_evidence()
             self._migrate_documents()
+            self._migrate_artifacts()
 
     def close(self):
         self.conn.close()
@@ -319,6 +320,60 @@ class Store:
     def document(self, project_id, document_id):
         rows = self.query("SELECT * FROM documents WHERE project_id=? AND id=?", (project_id, document_id))
         return rows[0] if rows else None
+
+    def _migrate_artifacts(self):
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_versions (
+              id TEXT PRIMARY KEY,
+              run_id TEXT REFERENCES runs(id),
+              project_id TEXT,
+              version INTEGER NOT NULL,
+              parent_version_id TEXT,
+              origin TEXT NOT NULL CHECK(origin IN ('system','user')),
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(run_id, version)
+            )
+            """
+        )
+
+    def list_artifact_versions(self, run_id):
+        return self.query(
+            "SELECT id,run_id,project_id,version,parent_version_id,origin,created_at FROM artifact_versions WHERE run_id=? ORDER BY version",
+            (run_id,),
+        )
+
+    def get_artifact_version(self, run_id, version):
+        rows = self.query("SELECT * FROM artifact_versions WHERE run_id=? AND version=?", (run_id, version))
+        if not rows:
+            return None
+        row = rows[0]
+        if isinstance(row.get("content"), str):
+            row["content"] = json.loads(row["content"])
+        return row
+
+    def add_artifact_version(self, run_id, project_id, content, origin="system", parent_version_id=None):
+        if origin not in {"system", "user"}:
+            raise ValueError("invalid_origin")
+        with self.lock, self.conn:
+            latest = self.conn.execute(
+                "SELECT id,version FROM artifact_versions WHERE run_id=? ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            version = (latest["version"] if latest else 0) + 1
+            parent = parent_version_id or (latest["id"] if latest else None)
+            artifact_id = uid("art")
+            self.conn.execute(
+                "INSERT INTO artifact_versions(id,run_id,project_id,version,parent_version_id,origin,content,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (artifact_id, run_id, project_id, version, parent, origin, json.dumps(content, ensure_ascii=False), now()),
+            )
+            self._event(run_id, "artifact.created" if origin == "system" else "artifact.edited", {
+                "version": version,
+                "origin": origin,
+                "parent_version_id": parent,
+            })
+        return self.get_artifact_version(run_id, version)
 
     def set_document_citable(self, project_id, document_id, citable):
         with self.lock, self.conn:

@@ -349,6 +349,7 @@ class Engine:
         coverage = coverage_matrix(state["plan"], evidence)
         supported = sum(c.get("verification") in {"fully", "partial", "reference_checked"} for c in claims)
         artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": verification_note(run["mode"]), "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
+        self.store.add_artifact_version(run["id"], run["project_id"], artifact, origin="system")
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         return {}
 

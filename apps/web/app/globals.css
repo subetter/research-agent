@@ -45,6 +45,9 @@ input,textarea,button,a{outline-color:#8370df}input:focus{border-color:#a99be5}
 .coverage-table td.missing {color:#9a7a3c;background:#f8f3e5}
 .plan-defaults {margin:4px 0 12px;font-size:11px;color:#6d6a8d;background:#f3f2f8;border-radius:8px;padding:10px 12px}
 .plan-skill {font-weight:600;color:#3f3a6b;margin-bottom:6px}
+.version-picker {display:flex;align-items:center;gap:8px;font-size:12px;color:#5d5980}
+.version-picker select {border:1px solid #d8d6e5;border-radius:8px;padding:4px 8px;background:#fff;color:#39346b}
+.artifact-edit {width:100%;min-height:84px;border:1px solid #d8d6e5;border-radius:8px;padding:10px 12px;margin:8px 0;background:#fff}
 .subject-trail {display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:14px}
 .subject-trail>div {background:#fff;border:1px solid #e2e1ee;border-radius:8px;padding:10px 12px}
 .subject-trail strong {font-size:12px;color:#3f3a6b}
