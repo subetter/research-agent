@@ -29,6 +29,31 @@ class ResearchState(TypedDict, total=False):
     coverage: dict
 
 
+class ResearcherState(TypedDict, total=False):
+    run_id: str
+    subject: str
+    round: int
+    dimensions: list
+    plan: dict
+    result: dict
+
+
+def subject_summary(result: dict) -> dict:
+    ids = list(result.get("evidence_ids") or [])
+    return {
+        "subject": result.get("subject"),
+        "evidence_ids": ids,
+        "error": result.get("error"),
+        "dimensions": list(result.get("dimensions") or []),
+        "summary": result.get("summary") or f"{result.get('subject')} 取得 {len(ids)} 条证据",
+    }
+
+
+def slim_plan(plan: dict) -> dict:
+    keys = ("goal", "subjects", "dimensions", "max_search_calls", "max_gap_rounds", "skill_name", "skill_version", "as_of", "regions")
+    return {key: plan[key] for key in keys if key in plan}
+
+
 def evidence_dimensions(item: dict) -> list[str]:
     dims = normalize_dimensions(item.get("dimensions"))
     return dims or infer_dimensions_from_title(item.get("title") or "")
@@ -148,6 +173,46 @@ class Engine:
         graph.add_edge("verify", "render")
         graph.add_edge("render", END)
         self.graph = graph.compile(checkpointer=checkpointer)
+        researcher = StateGraph(ResearcherState)
+        researcher.add_node("investigate", self.investigate)
+        researcher.add_edge(START, "investigate")
+        researcher.add_edge("investigate", END)
+        self.researcher = researcher.compile(checkpointer=checkpointer)
+
+    def researcher_config(self, run_id, subject, round_index):
+        return {"configurable": {"thread_id": f"{run_id}:research:{subject}:{round_index}"}}
+
+    async def investigate(self, state):
+        run = self.store.run(state["run_id"])
+        await self.gate(run["id"])
+        result = await self.provider.research(
+            run,
+            state["plan"],
+            state["subject"],
+            state.get("round", 0),
+            lambda: self.gate(run["id"]),
+            state.get("dimensions"),
+        )
+        return {"result": subject_summary(result)}
+
+    async def run_researcher(self, run, plan, subject, round_index, dimensions):
+        config = self.researcher_config(run["id"], subject, round_index)
+        snapshot = await self.researcher.aget_state(config)
+        if snapshot.values and not snapshot.next and snapshot.values.get("result"):
+            self.store.event(run["id"], "task.reused", {"subject": subject, "reason": "子图检查点已完成"})
+            return subject_summary(snapshot.values["result"])
+        payload = {
+            "run_id": run["id"],
+            "subject": subject,
+            "round": round_index,
+            "dimensions": list(dimensions or plan.get("dimensions") or []),
+            "plan": slim_plan(plan),
+        }
+        if snapshot.values and snapshot.next:
+            output = await self.researcher.ainvoke(None, config)
+        else:
+            output = await self.researcher.ainvoke(payload, config)
+        return subject_summary(output.get("result") or {})
 
     async def gate(self, run_id):
         run = self.store.run(run_id)
@@ -215,15 +280,15 @@ class Engine:
                     if old:
                         ids = [self.store.add_evidence(run["project_id"], run["id"], f"research:{subject}:0", e) for e in old]
                         self.store.event(run["id"], "task.reused", {"subject": subject, "reason": "父任务相同维度的有效证据"})
-                        return {"subject": subject, "evidence_ids": ids, "error": None, "dimensions": dimensions}
+                        return subject_summary({"subject": subject, "evidence_ids": ids, "error": None, "dimensions": dimensions})
                 try:
-                    return await self.provider.research(run, plan, subject, state.get("round", 0), lambda: self.gate(run["id"]), dimensions)
+                    return await self.run_researcher(run, plan, subject, state.get("round", 0), dimensions)
                 except (RunPaused, RunCancelled):
                     raise
                 except Exception as exc:
                     log.exception("Researcher failed run=%s subject=%s", run["id"], subject)
                     self.store.event(run["id"], "task.failed", {"subject": subject, "error": type(exc).__name__})
-                    return {"subject": subject, "evidence_ids": [], "error": "研究工具失败，请查看后台日志与调用轨迹", "dimensions": dimensions}
+                    return subject_summary({"subject": subject, "evidence_ids": [], "error": "研究工具失败，请查看后台日志与调用轨迹", "dimensions": dimensions})
 
         targets = research_targets(plan, state.get("gaps"))
         # Cancel sibling coroutines before resuming a failed node to prevent stale writes.
