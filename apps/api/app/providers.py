@@ -7,7 +7,7 @@ import httpx
 from .schemas import ResearchPlan, ClaimBundle, VerificationBundle
 from .llm import complete
 from .scope import apply_plan_defaults, truncate
-from .skills import allowed_tools_for, choose_skill, inject_skill, load_skill, parse_skill_choice, skill_catalog, skill_prompt
+from .skills import allowed_tools_for, choose_skill, inject_skill, load_skill, skill_catalog, skill_prompt
 from .store import normalize_dimensions, uid
 
 REPORT_KEYS = {"synthesize", "verify"}
@@ -159,14 +159,7 @@ class Provider:
         question = request.get("question") or run["question"]
         subjects = request.get("subjects") or []
         dimensions = request.get("dimensions") or []
-        if run["mode"] == "demo":
-            name = choose_skill(question, subjects, dimensions, catalog)
-        else:
-            message = await self.chat(run["id"], [
-                {"role": "system", "content": "你是研究规划器。下面是技能目录（只有名称、适用条件与必需维度，没有正文）。从目录中选一个，只输出 JSON {\"skill_name\": \"...\"}。禁止发明目录外的名称。"},
-                {"role": "user", "content": json.dumps({"request": request, "catalog": catalog}, ensure_ascii=False)},
-            ], "skill")
-            name = parse_skill_choice(message.get("content") or "", catalog) or choose_skill(question, subjects, dimensions, catalog)
+        name = choose_skill(question, subjects, dimensions, catalog)
         return load_skill(name)
 
     async def plan(self, run, request):

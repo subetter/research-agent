@@ -69,26 +69,25 @@ async def test_live_plan_sees_catalog_then_injects_body(tmp_path):
     provider = Provider(Settings(_env_file=None, research_mode="live"), store)
     project = store.create_project("技能", "")
     run = store.create_run(project["id"], "比较两家产品的定价", "live", {})
+    catalog = skill_catalog()
+    catalog_text = json.dumps(catalog, ensure_ascii=False)
+    assert UNIQUE_BODY["competitor_analysis"] not in catalog_text
+    chosen = choose_skill(run["question"], ["产品 A", "产品 B"], ["定价"], catalog)
+    assert chosen == "competitor_analysis"
     seen = []
 
     async def fake_chat(run_id, messages, key, tools=None):
         seen.append((key, messages[0]["content"], messages[1]["content"]))
-        if key == "skill":
-            return {"content": json.dumps({"skill_name": "competitor_analysis"})}
         plan = ResearchPlan(goal=run["question"], subjects=["产品 A", "产品 B"], dimensions=["定价"])
         return {"content": plan.model_dump_json()}
 
     provider.chat = fake_chat
     plan = await provider.plan(run, {"question": run["question"], "subjects": ["产品 A", "产品 B"], "dimensions": ["定价"]})
-    assert [item[0] for item in seen] == ["skill", "plan"]
-    catalog_prompt, catalog_payload = seen[0][1], seen[0][2]
-    plan_prompt = seen[1][1]
-    assert "技能目录" in catalog_prompt
-    assert UNIQUE_BODY["competitor_analysis"] not in catalog_prompt
-    assert UNIQUE_BODY["competitor_analysis"] not in catalog_payload
-    assert "competitor_analysis" in catalog_payload
+    assert [item[0] for item in seen] == ["plan"]
+    plan_prompt = seen[0][1]
     assert UNIQUE_BODY["competitor_analysis"] in plan_prompt
     assert UNIQUE_BODY["industry_landscape"] not in plan_prompt
+    assert "已选择技能 competitor_analysis" in plan_prompt
     assert plan["skill_name"] == "competitor_analysis"
     assert plan["skill_version"] == load_skill("competitor_analysis").version
 
