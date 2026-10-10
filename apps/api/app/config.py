@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     langfuse_redact: str = ""
     synthesis_context_budget: int = Field(default=24000, ge=400, le=200000)
     synthesis_quotes_per_cell: int = Field(default=2, ge=1, le=4)
+    # Estimate-only price table for live eval. Not a billing statement.
+    eval_price_version: str = "2026-10-10-v1"
+    eval_deepseek_prompt_usd_per_1m: float = Field(default=0.27, ge=0)
+    eval_deepseek_completion_usd_per_1m: float = Field(default=1.10, ge=0)
+    eval_deepseek_reasoning_usd_per_1m: float = Field(default=1.10, ge=0)
+    eval_tavily_search_usd: float = Field(default=0.008, ge=0)
 
     @property
     def tracing_enabled(self) -> bool:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the workbench graph and single-search baseline on pinned fixtures. No API keys."""
+"""Run the workbench graph and single-search baseline. Default is offline replay."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -19,6 +20,22 @@ from app.config import Settings
 from app.engine import Engine, coverage_matrix, validate_claims, verification_note
 from app.providers import BudgetExceeded, Provider, is_report_operation
 from app.store import Store
+from live_eval import (
+    LiveEvalConfigError,
+    build_sample_rows,
+    estimate_cost,
+    guess_subject,
+    live_out_dir,
+    live_settings,
+    price_table,
+    render_cost_summary,
+    require_live_keys,
+    resolve_task_ids,
+    summarize_cost,
+    task_by_id,
+    usage_from_store,
+    write_samples_csv,
+)
 from score import score_dir, summarize
 
 FIXTURES = ROOT / "fixtures"
@@ -52,6 +69,27 @@ def settings_for(path: Path) -> Settings:
         max_search_calls=24,
         max_gap_rounds=1,
     )
+
+
+def attach_live_metrics(payload: dict, store, run_id: str, started: float, prices: dict) -> dict:
+    usage = usage_from_store(store, run_id)
+    payload["usage"] = usage["usage"]
+    payload["model_calls"] = usage["model_calls"]
+    payload["search_calls"] = usage["search_calls"]
+    payload["prompt_tokens"] = usage["prompt_tokens"]
+    payload["completion_tokens"] = usage["completion_tokens"]
+    payload["reasoning_tokens"] = usage["reasoning_tokens"]
+    payload["tokens"] = usage["tokens"]
+    payload["wall_seconds"] = round(time.perf_counter() - started, 3)
+    payload["cost"] = estimate_cost(
+        usage["prompt_tokens"],
+        usage["completion_tokens"],
+        usage["reasoning_tokens"],
+        usage["search_calls"],
+        prices,
+        total_tokens=usage["tokens"],
+    )
+    return payload
 
 
 def bind_policy_claims(policy_claims, evidence):
@@ -244,6 +282,88 @@ async def run_baseline(fixtures: dict, workdir: Path, repeat: int) -> dict:
     return payload
 
 
+async def run_live_workbench(task: dict, workdir: Path, repeat: int, source) -> dict:
+    settings = live_settings(workdir, source)
+    prices = price_table(settings)
+    store = Store(workdir / "business.sqlite")
+    started = time.perf_counter()
+    timeout = settings.run_timeout_seconds + 60
+    async with AsyncSqliteSaver.from_conn_string(str(workdir / "graph.sqlite")) as saver:
+        engine = Engine(settings, store, saver)
+        project = store.create_project("live-eval", "")
+        request = {"question": task["question"], "subjects": task["subjects"], "dimensions": task["dimensions"]}
+        run = store.create_run(project["id"], task["question"], "live", {"request": request})
+        if run["mode"] != "live":
+            raise RuntimeError("live eval must not fall back to demo")
+        engine.schedule(run["id"], {"run_id": run["id"], "request": request})
+        ready = await wait_status(store, run["id"], {"waiting_input", "failed"}, timeout=timeout)
+        if ready["status"] != "waiting_input":
+            payload = attach_live_metrics(export_payload(task, "workbench", repeat, ready, store), store, run["id"], started, prices)
+            await engine.shutdown()
+            store.close()
+            return payload
+        store.update(run["id"], status="running")
+        engine.schedule(run["id"], await engine.resume_input(run["id"]))
+        done = await wait_status(store, run["id"], {"completed", "partial", "failed"}, timeout=timeout)
+        payload = attach_live_metrics(export_payload(task, "workbench", repeat, done, store), store, run["id"], started, prices)
+        await engine.shutdown()
+    store.close()
+    return payload
+
+
+async def run_live_baseline(task: dict, workdir: Path, repeat: int, source) -> dict:
+    settings = live_settings(workdir, source)
+    prices = price_table(settings)
+    store = Store(workdir / "business.sqlite")
+    provider = Provider(settings, store)
+    project = store.create_project("live-eval", "")
+    request = {"question": task["question"], "subjects": task["subjects"], "dimensions": task["dimensions"]}
+    run = store.create_run(project["id"], task["question"], "live", {"request": request})
+    plan = {"subjects": task["subjects"], "dimensions": task["dimensions"], "max_search_calls": settings.max_search_calls, "max_gap_rounds": 0}
+    started = time.perf_counter()
+
+    async def gate():
+        return None
+
+    search = await provider.search(run, task["baseline_query"], "baseline-search", settings.max_search_calls)
+    for page in search.get("results") or []:
+        subject = guess_subject(page, task["subjects"])
+        store.add_evidence(project["id"], run["id"], f"research:{subject}:0", {
+            "title": page.get("title") or page["url"],
+            "url": page["url"],
+            "quote": page.get("snippet") or "",
+            "locator": "snippet:1",
+            "source_type": "web",
+            "dimensions": [],
+        })
+    bundle = await provider.synthesize(run, plan, store.evidence(run["id"]), gate)
+    verified = await provider.verify(run, plan, bundle, store.evidence(run["id"]), gate)
+    evidence = store.evidence(run["id"])
+    claims = validate_claims(plan, verified, evidence)
+    coverage = coverage_matrix(plan, evidence)
+    unknown = sum(claim["kind"] == "unknown" for claim in claims)
+    artifact = {
+        "title": task["question"],
+        "summary": verified.get("summary", "baseline A"),
+        "claims": claims,
+        "mode": "live",
+        "verification_note": verification_note("live"),
+        "coverage": coverage,
+        "metrics": {
+            "claims": len(claims),
+            "evidence": len(evidence),
+            "unknown": unknown,
+            "with_references": sum(bool(claim["evidence_ids"]) for claim in claims),
+            "cells_covered": coverage["covered"],
+            "cells_total": coverage["total"],
+        },
+    }
+    store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
+    payload = attach_live_metrics(export_payload(task, "baseline", repeat, store.run(run["id"]), store), store, run["id"], started, prices)
+    store.close()
+    return payload
+
+
 def write_payload(dest: Path, payload: dict) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / f"{payload['system']}-{payload['task_id']}-r{payload['repeat']}.json"
@@ -253,13 +373,26 @@ def write_payload(dest: Path, payload: dict) -> Path:
 
 async def run_all(out_dir: Path, repeats: int = REPEATS, task_ids: list[str] | None = None) -> list[dict]:
     payloads = []
-    for task_id in task_ids or list_tasks():
+    for task_id in resolve_task_ids(task_ids, live=False):
         fixtures = load_fixture(task_id)
         fixtures["task"].setdefault("page_subjects", {})
         for repeat in range(1, repeats + 1):
             payloads.append(await run_workbench(fixtures, out_dir / "work" / f"{task_id}-w{repeat}", repeat))
             write_payload(out_dir, payloads[-1])
             payloads.append(await run_baseline(fixtures, out_dir / "work" / f"{task_id}-b{repeat}", repeat))
+            write_payload(out_dir, payloads[-1])
+    return payloads
+
+
+async def run_live(out_dir: Path, repeats: int, task_ids: list[str], source) -> list[dict]:
+    require_live_keys(source)
+    payloads = []
+    for task_id in task_ids:
+        task = task_by_id(task_id)
+        for repeat in range(1, repeats + 1):
+            payloads.append(await run_live_workbench(task, out_dir / "work" / f"{task_id}-w{repeat}", repeat, source))
+            write_payload(out_dir, payloads[-1])
+            payloads.append(await run_live_baseline(task, out_dir / "work" / f"{task_id}-b{repeat}", repeat, source))
             write_payload(out_dir, payloads[-1])
     return payloads
 
@@ -296,17 +429,71 @@ def write_results_md(table: str, summary: dict, n: int) -> str:
     return "\n".join(lines)
 
 
+def write_live_md(table: str, summary: dict, cost: dict, n: int) -> str:
+    lines = [
+        "# 联网评测结果",
+        "",
+        "可选联网模式。题面与离线集相同，但搜索与模型走真实服务，不使用夹具里的原文或回放主张。",
+        "工作台与基线 A 同一预算：`max_model_calls=80`、`report_reserved_calls=4`、`max_search_calls=24`。",
+        f"费用为估价（价表 {cost.get('price_version')}，日期 {cost.get('as_of')}），不是账单。",
+        cost.get("disclaimer") or "",
+        "",
+        f"导出产物 {n} 份。",
+        "",
+        render_cost_summary(cost),
+        "",
+        "```",
+        table,
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=str(ROOT / "results" / "latest"))
-    parser.add_argument("--repeats", type=int, default=REPEATS)
+    parser.add_argument("--live", action="store_true", help="走真实模型与 Tavily；缺密钥直接拒绝，不回落演示")
+    parser.add_argument("--tasks", nargs="+", default=None, help="按题号挑选；联网未指定时默认竞品+缺失+冲突各一题")
+    parser.add_argument("--out", default=None)
+    parser.add_argument("--repeats", type=int, default=None)
     parser.add_argument("--write-fixtures", action="store_true")
     args = parser.parse_args()
+    live = bool(args.live)
+    repeats = args.repeats if args.repeats is not None else (1 if live else REPEATS)
+    try:
+        task_ids = resolve_task_ids(args.tasks, live=live)
+    except LiveEvalConfigError as exc:
+        raise SystemExit(str(exc)) from exc
+    if live:
+        source = Settings()
+        try:
+            require_live_keys(source)
+        except LiveEvalConfigError as exc:
+            raise SystemExit(str(exc)) from exc
+        out_dir = Path(args.out) if args.out else live_out_dir(ROOT)
+        print(f"联网评测 {len(task_ids)} 题 × {repeats} 次，输出 {out_dir}", flush=True)
+        if args.tasks is None:
+            print("未指定 --tasks，冒烟默认：comp-chatgpt-gemini（竞品） miss-inkbot-price（缺失） conf-price（冲突）", flush=True)
+        payloads = asyncio.run(run_live(out_dir, repeats, task_ids, source))
+        rows, table = score_dir(out_dir)
+        print(table)
+        prices = price_table(source)
+        cost = summarize_cost(payloads, prices)
+        print(render_cost_summary(cost))
+        samples = build_sample_rows(payloads)
+        write_samples_csv(out_dir / "samples.csv", samples)
+        summary = summarize(rows)
+        (out_dir / "summary.json").write_text(
+            json.dumps({"summary": summary, "cost": cost, "n": len(payloads), "tasks": task_ids, "live": True}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (out_dir / "LIVE.md").write_text(write_live_md(table, summary, cost, len(payloads)), encoding="utf-8")
+        return
     if args.write_fixtures or not (FIXTURES / "index.json").exists():
         from build_fixtures import write_fixtures
         write_fixtures()
-    out_dir = Path(args.out)
-    payloads = asyncio.run(run_all(out_dir, args.repeats))
+    out_dir = Path(args.out) if args.out else ROOT / "results" / "latest"
+    payloads = asyncio.run(run_all(out_dir, repeats, task_ids))
     rows, table = score_dir(out_dir)
     print(table)
     summary = summarize(rows)
