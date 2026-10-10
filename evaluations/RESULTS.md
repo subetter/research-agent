@@ -80,3 +80,5 @@ means over all repeats (not the best run):
   baseline: n=30 cov=0.00 cite=1.00 support=0.52 model=2.00 search=1.00 tokens=60.00 failed=none
   workbench: n=30 cov=0.89 cite=1.00 support=1.00 model=9.00 search=2.00 tokens=124.00 failed=none
 ```
+
+按格选证切片用同一 10 题×3 次固定集重跑，均值与切片前相同：工作台覆盖 0.89、支持 1.00；基线覆盖 0.00、支持 0.52。本切片只改综合上下文选取，回放主张与核验标签未改，故这两项分数不变。

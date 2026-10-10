@@ -9,7 +9,7 @@
 - **对象子图 span**：`researcher:{对象}`，下面还有 `investigate`。
 - **模型 generation**：每次 `llm.complete` / `llm.stream_complete` 记模型名、prompt、输出、token、时延；推理 token 计入 `reasoning_tokens`，**不保存思维链正文**。
 - **工具 span**：`search_web`、`read_source`、`search_project` 记录输入和截断后的输出，不含网页全文或 Tavily 密钥。
-- **分数 / 元数据**：覆盖率、核验统计（`fully` / `partial` / `reference_checked` 等）挂在同一条 trace 上。
+- **分数 / 元数据**：覆盖率、核验统计（`fully` / `partial` / `reference_checked` 等）挂在同一条 trace 上。综合阶段会写入 `synthesis.included_evidence_ids` 以及每格入报告条数，与 `synthesis.context` 事件一致。
 
 普通会话用会话 id 另开一条 `chat-conversation` trace，每轮是 `chat.turn`。
 

@@ -6,6 +6,7 @@ from langgraph.types import Command, interrupt
 from .providers import Provider
 from .scope import apply_plan_defaults, infer_scope, needs_clarify
 from .store import infer_dimensions_from_title, normalize_dimensions, subject_from_task_key, uid
+from .synthesis import attach_synthesis_counts, latest_synthesis_context
 from .tracing import get_tracing
 
 log = logging.getLogger(__name__)
@@ -395,7 +396,7 @@ class Engine:
         evidence = self.store.evidence(run["id"])
         claims = validate_claims(state["plan"], state["bundle"], evidence)
         unknown = sum(c["kind"] == "unknown" for c in claims)
-        coverage = coverage_matrix(state["plan"], evidence)
+        coverage = attach_synthesis_counts(coverage_matrix(state["plan"], evidence), latest_synthesis_context(self.store, run["id"]))
         supported = sum(c.get("verification") in {"fully", "partial", "reference_checked"} for c in claims)
         artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": verification_note(run["mode"]), "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
         self.store.add_artifact_version(run["id"], run["project_id"], artifact, origin="system")
