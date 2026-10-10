@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     eval_deepseek_completion_usd_per_1m: float = Field(default=1.10, ge=0)
     eval_deepseek_reasoning_usd_per_1m: float = Field(default=1.10, ge=0)
     eval_tavily_search_usd: float = Field(default=0.008, ge=0)
+    eval_max_tokens_per_task: int = Field(default=0, ge=0, le=2000000)
 
     @property
     def tracing_enabled(self) -> bool:

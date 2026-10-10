@@ -1,7 +1,7 @@
 import sqlite3
 
 from app.engine import coverage_matrix
-from app.providers import extract_dimension_passages
+from app.providers import extract_dimension_passages, tag_text_dimensions
 from app.store import Store, canonical_url
 
 
@@ -127,6 +127,18 @@ def test_old_schema_migration_adds_evidence_columns(tmp_path):
     assert merged == "ev_old"
     assert set(store.evidence("run_old")[0]["dimensions"]) == {"产品形态", "研究流程"}
     store.close()
+
+
+def test_live_dimension_aliases_and_renamed_tags():
+    plan = {"subjects": ["A"], "dimensions": ["定价"]}
+    evidence = [{"id": "ev1", "task_key": "research:A:0", "title": "A 定价页", "dimensions": ["定价口径A"]}]
+    coverage = coverage_matrix(plan, evidence)
+    assert coverage["covered"] == 1
+    assert coverage["gaps"] == []
+    assert tag_text_dimensions("Plus is $20 / month pricing", ["定价", "部署方式"]) == ["定价"]
+    passages = extract_dimension_passages("The Plus plan pricing is $20 per month.\n\nUnrelated footer.", ["定价"])
+    assert passages
+    assert passages[0]["dimensions"] == ["定价"]
 
 
 def test_extract_dimension_passages_skips_unrelated_chunks():

@@ -2,7 +2,19 @@
 import time
 from urllib.parse import urlparse
 import httpx
+from .redact import redact
 from .tracing import get_tracing, reasoning_tokens
+
+
+class ModelRequestError(ValueError):
+    def __init__(self, message, status_code=None, body=""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = body or ""
+
+    @property
+    def is_client_error(self) -> bool:
+        return self.status_code is not None and 400 <= int(self.status_code) < 500
 
 
 def is_deepseek(settings):
@@ -21,6 +33,32 @@ def completion_payload(settings, messages, tools=None, json_output=False):
         if settings.deepseek_thinking == "enabled":
             payload["reasoning_effort"] = settings.deepseek_reasoning_effort
     return payload
+
+
+def _http_error(settings, response):
+    messages_by_status = {
+        400: "模型请求参数不兼容，请检查模型名称、思考模式与输出上限",
+        401: "模型 API Key 无效，请检查本地配置",
+        402: "模型服务余额不足，请检查 API 平台余额",
+        429: "模型请求频率过高，请稍后重试",
+        500: "模型服务暂时异常，请稍后重试",
+        503: "模型服务暂时繁忙，请稍后重试",
+    }
+    mapped = messages_by_status.get(response.status_code, f"模型服务请求失败（HTTP {response.status_code}）")
+    raw = ""
+    try:
+        payload = response.json()
+        err = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(err, dict):
+            raw = str(err.get("message") or "")
+        elif isinstance(payload, dict):
+            raw = str(payload.get("message") or "")
+    except Exception:
+        raw = (response.text or "")[:180]
+    secrets = [settings.llm_api_key, settings.tavily_api_key, getattr(settings, "langfuse_secret_key", "")]
+    detail = str(redact(raw, [item for item in secrets if item]) or "")[:180]
+    message = f"{mapped}：{detail}" if detail else mapped
+    return message, response.status_code, detail
 
 
 def _record_generation(settings, name, messages, body=None, error=None, started=None, extra=None):
@@ -52,15 +90,7 @@ async def complete(settings, messages, tools=None, json_output=False):
             response = await client.post(settings.llm_base_url.rstrip("/") + "/chat/completions",
                                          headers={"Authorization": f"Bearer {settings.llm_api_key}"}, json=payload)
             if response.is_error:
-                messages_by_status = {
-                    400: "模型请求参数不兼容，请检查模型名称、思考模式与输出上限",
-                    401: "模型 API Key 无效，请检查本地配置",
-                    402: "模型服务余额不足，请检查 API 平台余额",
-                    429: "模型请求频率过高，请稍后重试",
-                    500: "模型服务暂时异常，请稍后重试",
-                    503: "模型服务暂时繁忙，请稍后重试",
-                }
-                raise ValueError(messages_by_status.get(response.status_code, f"模型服务请求失败（HTTP {response.status_code}）"))
+                raise ModelRequestError(*_http_error(settings, response))
             body = response.json()
         choices = body.get("choices") or []
         if not choices:

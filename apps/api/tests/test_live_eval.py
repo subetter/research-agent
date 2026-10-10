@@ -127,3 +127,69 @@ def test_projection_scales_three_tasks_to_ten():
     assert summary["projected_10_tasks_usd"] == pytest.approx(3.0)
     assert summary["price_version"]
     assert live_out_dir(Path("/tmp"), "20261010T010203Z") == Path("/tmp/results/live-20261010T010203Z")
+
+
+async def test_preflight_aborts_on_mocked_400(monkeypatch):
+    from app.llm import ModelRequestError
+    from live_eval import preflight_live
+
+    seen = []
+
+    async def complete(settings, messages, tools=None, json_output=False):
+        seen.append((bool(tools), json_output))
+        if json_output and not tools and len(seen) >= 3:
+            raise ModelRequestError("模型请求参数不兼容", status_code=400, body="bad verify")
+        return {"choices": [{"message": {"role": "assistant", "content": "{}"}}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr("app.llm.complete", complete)
+    with pytest.raises(LiveEvalConfigError) as exc:
+        await preflight_live(empty_settings(llm_api_key="k", llm_model="m", tavily_api_key="t"))
+    assert "预检失败" in str(exc.value)
+    assert "400" in str(exc.value)
+    assert "k" not in str(exc.value)
+
+
+async def test_token_ceiling_stops_research_not_report(tmp_path, monkeypatch):
+    from app.providers import BudgetExceeded, Provider
+    from app.store import Store
+
+    async def complete(*args, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": "{}"}}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr("app.providers.complete", complete)
+    store = Store(tmp_path / "ceil.sqlite")
+    project = store.create_project("顶", "")
+    run = store.create_run(project["id"], "token 顶", "live", {})
+    store.reserve(run["id"], "research:0", "model", 80)
+    store.settle(run["id"], "research:0", tokens=90000)
+    provider = Provider(Settings(_env_file=None, eval_max_tokens_per_task=80000), store)
+    with pytest.raises(BudgetExceeded) as exc:
+        await provider.chat(run["id"], [{"role": "user", "content": "x"}], "research:1")
+    assert "80000" in str(exc.value)
+    await provider.chat(run["id"], [{"role": "user", "content": "x"}], "verify")
+    store.close()
+
+
+async def test_plan_keeps_requested_scope(tmp_path, monkeypatch):
+    import json
+    from app.providers import Provider
+    from app.store import Store
+
+    store = Store(tmp_path / "plan.sqlite")
+    project = store.create_project("计划", "")
+    run = store.create_run(project["id"], "比较定价", "live", {})
+    provider = Provider(Settings(_env_file=None, llm_api_key="k", llm_model="m", tavily_api_key="t"), store)
+
+    async def complete(*args, **kwargs):
+        return {"choices": [{"message": {"role": "assistant", "content": json.dumps({
+            "goal": "改写后的目标文本",
+            "subjects": ["被改掉的对象"],
+            "dimensions": ["定价口径A", "定价口径B"],
+            "questions": ["问一句"],
+        }, ensure_ascii=False)}}], "usage": {"total_tokens": 6}}
+
+    monkeypatch.setattr("app.providers.complete", complete)
+    plan = await provider.plan(run, {"question": "比较 ChatGPT 定价", "subjects": ["ChatGPT"], "dimensions": ["定价"]})
+    assert plan["subjects"] == ["ChatGPT"]
+    assert plan["dimensions"] == ["定价"]
+    store.close()
