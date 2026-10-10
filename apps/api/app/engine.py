@@ -3,7 +3,7 @@ import logging
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
-from .providers import Provider
+from .providers import Provider, dimension_covers
 from .scope import apply_plan_defaults, infer_scope, needs_clarify
 from .store import infer_dimensions_from_title, normalize_dimensions, subject_from_task_key, uid
 from .synthesis import attach_synthesis_counts, latest_synthesis_context
@@ -69,8 +69,9 @@ def coverage_matrix(plan, evidence):
         subject = subject_from_task_key(item.get("task_key") or "")
         if subject is None:
             continue
-        for dimension in evidence_dimensions(item):
-            if (subject, dimension) in cells:
+        tagged = evidence_dimensions(item)
+        for dimension in dimensions:
+            if dimension_covers(dimension, tagged) and item["id"] not in cells[(subject, dimension)]:
                 cells[(subject, dimension)].append(item["id"])
     gaps = [{"subject": subject, "dimension": dimension} for (subject, dimension), ids in cells.items() if not ids]
     return {

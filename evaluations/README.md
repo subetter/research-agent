@@ -57,6 +57,8 @@ cd evaluations
 ../apps/api/.venv/bin/python agreement.py results/live-<时间戳>/samples.csv
 ```
 
+联网开始前会对 plan / 研究工具循环 / synthesize / verify 四种请求形状各打一次极小预检，任一 400 立刻中止。每题默认 token 顶 80000（可用 `EVAL_MAX_TOKENS_PER_TASK` 改），触顶后转入报告，不继续烧研究调用。
+
 本机三题冒烟（在仓库根目录，`.env` 已填密钥）：
 
 ```bash

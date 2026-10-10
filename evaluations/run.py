@@ -27,6 +27,7 @@ from live_eval import (
     guess_subject,
     live_out_dir,
     live_settings,
+    preflight_live,
     price_table,
     render_cost_summary,
     require_live_keys,
@@ -71,7 +72,7 @@ def settings_for(path: Path) -> Settings:
     )
 
 
-def attach_live_metrics(payload: dict, store, run_id: str, started: float, prices: dict) -> dict:
+def attach_live_metrics(payload: dict, store, run_id: str, started: float, prices: dict, task=None, settings=None) -> dict:
     usage = usage_from_store(store, run_id)
     payload["usage"] = usage["usage"]
     payload["model_calls"] = usage["model_calls"]
@@ -89,6 +90,15 @@ def attach_live_metrics(payload: dict, store, run_id: str, started: float, price
         prices,
         total_tokens=usage["tokens"],
     )
+    ceiling = int(getattr(settings, "eval_max_tokens_per_task", 0) or 0) if settings else 0
+    payload["token_ceiling"] = ceiling or None
+    payload["token_ceiling_hit"] = bool(ceiling and usage["tokens"] >= ceiling)
+    if not payload.get("coverage") and task:
+        plan = (store.run(run_id) or {}).get("plan") or {}
+        payload["coverage"] = coverage_matrix(
+            {"subjects": plan.get("subjects") or task.get("subjects") or [], "dimensions": plan.get("dimensions") or task.get("dimensions") or []},
+            payload.get("evidence") or store.evidence(run_id),
+        )
     return payload
 
 
@@ -298,14 +308,15 @@ async def run_live_workbench(task: dict, workdir: Path, repeat: int, source) -> 
         engine.schedule(run["id"], {"run_id": run["id"], "request": request})
         ready = await wait_status(store, run["id"], {"waiting_input", "failed"}, timeout=timeout)
         if ready["status"] != "waiting_input":
-            payload = attach_live_metrics(export_payload(task, "workbench", repeat, ready, store), store, run["id"], started, prices)
+            payload = attach_live_metrics(export_payload(task, "workbench", repeat, ready, store), store, run["id"], started, prices, task=task, settings=settings)
             await engine.shutdown()
             store.close()
             return payload
-        store.update(run["id"], status="running")
+        plan = {**(store.run(run["id"]).get("plan") or {}), "subjects": task["subjects"], "dimensions": task["dimensions"]}
+        store.update(run["id"], status="running", plan=plan)
         engine.schedule(run["id"], await engine.resume_input(run["id"]))
         done = await wait_status(store, run["id"], {"completed", "partial", "failed"}, timeout=timeout)
-        payload = attach_live_metrics(export_payload(task, "workbench", repeat, done, store), store, run["id"], started, prices)
+        payload = attach_live_metrics(export_payload(task, "workbench", repeat, done, store), store, run["id"], started, prices, task=task, settings=settings)
         await engine.shutdown()
     store.close()
     return payload
@@ -328,13 +339,15 @@ async def run_live_baseline(task: dict, workdir: Path, repeat: int, source) -> d
     search = await provider.search(run, task["baseline_query"], "baseline-search", settings.max_search_calls)
     for page in search.get("results") or []:
         subject = guess_subject(page, task["subjects"])
+        blob = f"{page.get('title') or ''} {page.get('snippet') or ''}"
+        from app.providers import tag_text_dimensions
         store.add_evidence(project["id"], run["id"], f"research:{subject}:0", {
             "title": page.get("title") or page["url"],
             "url": page["url"],
             "quote": page.get("snippet") or "",
             "locator": "snippet:1",
             "source_type": "web",
-            "dimensions": [],
+            "dimensions": tag_text_dimensions(blob, task["dimensions"]),
         })
     bundle = await provider.synthesize(run, plan, store.evidence(run["id"]), gate)
     verified = await provider.verify(run, plan, bundle, store.evidence(run["id"]), gate)
@@ -359,7 +372,7 @@ async def run_live_baseline(task: dict, workdir: Path, repeat: int, source) -> d
         },
     }
     store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
-    payload = attach_live_metrics(export_payload(task, "baseline", repeat, store.run(run["id"]), store), store, run["id"], started, prices)
+    payload = attach_live_metrics(export_payload(task, "baseline", repeat, store.run(run["id"]), store), store, run["id"], started, prices, task=task, settings=settings)
     store.close()
     return payload
 
@@ -474,6 +487,11 @@ def main():
         print(f"联网评测 {len(task_ids)} 题 × {repeats} 次，输出 {out_dir}", flush=True)
         if args.tasks is None:
             print("未指定 --tasks，冒烟默认：comp-chatgpt-gemini（竞品） miss-inkbot-price（缺失） conf-price（冲突）", flush=True)
+        try:
+            shapes = asyncio.run(preflight_live(source))
+        except LiveEvalConfigError as exc:
+            raise SystemExit(str(exc)) from exc
+        print("联网预检通过：" + "、".join(shapes), flush=True)
         payloads = asyncio.run(run_live(out_dir, repeats, task_ids, source))
         rows, table = score_dir(out_dir)
         print(table)

@@ -1,5 +1,6 @@
 from app.config import Settings
 from app.engine import validate_claims
+from app.llm import ModelRequestError
 from app.providers import Provider, apply_demo_verification, apply_live_verdicts, bind_claim_ids
 from app.store import Store
 
@@ -114,6 +115,52 @@ async def test_demo_verify_does_not_call_model(tmp_path, monkeypatch):
     assert result["claims"][0]["kind"] == "analysis"
     assert calls == []
     assert store.usage_count(run["id"], "model") == 0
+    store.close()
+
+
+async def test_verify_4xx_degrades_instead_of_failing(tmp_path, monkeypatch):
+    store = Store(tmp_path / "verify.sqlite")
+    project = store.create_project("核验", "")
+    run = store.create_run(project["id"], "研究部署方式", "live", {})
+    ev_id = _evidence(store, project["id"], run["id"])
+    provider = Provider(Settings(_env_file=None), store)
+
+    async def complete(*args, **kwargs):
+        raise ModelRequestError("模型请求参数不兼容，请检查模型名称、思考模式与输出上限：thinking mismatch", status_code=400, body="thinking mismatch")
+
+    async def gate():
+        pass
+
+    monkeypatch.setattr("app.providers.complete", complete)
+    bundle = {"claims": [{"subject": "A", "dimension": "部署方式", "text": "支持私有化。", "kind": "fact", "evidence_ids": [ev_id]}], "summary": "摘要"}
+    result = await provider.verify(run, {"subjects": ["A"], "dimensions": ["部署方式"]}, bundle, store.evidence(run["id"]), gate)
+    assert result["claims"][0]["verification"] == "unconfirmed"
+    assert result["claims"][0]["kind"] == "unknown"
+    events = store.query("SELECT * FROM events WHERE run_id=? AND type='verify.degraded'", (run["id"],))
+    assert events
+    assert events[0]["payload"]["status_code"] == 400
+    store.close()
+
+
+async def test_verify_chunks_large_claim_batches(tmp_path, monkeypatch):
+    store = Store(tmp_path / "verify.sqlite")
+    project = store.create_project("核验", "")
+    run = store.create_run(project["id"], "研究多格", "live", {})
+    ids = [_evidence(store, project["id"], run["id"], f"原文 {index}") for index in range(5)]
+    provider = Provider(Settings(_env_file=None), store)
+    calls = []
+
+    async def complete(*args, **kwargs):
+        calls.append(args[1][1]["content"])
+        return {"choices": [{"message": {"role": "assistant", "content": '{"results":[]}'}}], "usage": {"total_tokens": 4}}
+
+    async def gate():
+        pass
+
+    monkeypatch.setattr("app.providers.complete", complete)
+    claims = [{"subject": "A", "dimension": f"维{index}", "text": "有原文。", "kind": "fact", "evidence_ids": [ids[index]]} for index in range(5)]
+    await provider.verify(run, {"subjects": ["A"], "dimensions": [f"维{index}" for index in range(5)]}, {"claims": claims, "summary": ""}, store.evidence(run["id"]), gate)
+    assert len(calls) == 2
     store.close()
 
 

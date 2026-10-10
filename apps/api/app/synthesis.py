@@ -72,11 +72,13 @@ def score_quote(item: dict, subject: str, dimension: str) -> float:
 
 
 def _candidates(evidence: list[dict], subject: str, dimension: str) -> list[dict]:
+    from .providers import dimension_covers
+
     matches = []
     for item in evidence:
         if subject_from_task_key(item.get("task_key") or "") != subject:
             continue
-        if dimension in cell_dimensions(item):
+        if dimension_covers(dimension, cell_dimensions(item)):
             matches.append(item)
     return matches
 

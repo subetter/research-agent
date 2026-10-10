@@ -83,6 +83,7 @@ def live_settings(workdir: Path, source=None):
         report_reserved_calls=4,
         max_search_calls=24,
         max_gap_rounds=1,
+        eval_max_tokens_per_task=int(payload.get("eval_max_tokens_per_task") or 80000),
     )
     return Settings(_env_file=None, **payload)
 
@@ -227,6 +228,32 @@ def samples_csv_text(rows: list[dict]) -> str:
     return buffer.getvalue()
 
 
+PREFLIGHT_TOOLS = [
+    {"type": "function", "function": {"name": "search_web", "description": "search", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+]
+
+
+async def preflight_live(settings) -> list[str]:
+    from app.llm import ModelRequestError, complete
+
+    shapes = [
+        ("plan", [{"role": "system", "content": "只输出 JSON。"}, {"role": "user", "content": '{"ping":true}'}], {"json_output": True, "tools": None}),
+        ("research", [{"role": "system", "content": "如需搜索可调用工具，否则直接回复 ok。"}, {"role": "user", "content": "ping"}], {"json_output": False, "tools": PREFLIGHT_TOOLS}),
+        ("synthesize", [{"role": "system", "content": "只输出 JSON。"}, {"role": "user", "content": '{"cells":[]}'}], {"json_output": True, "tools": None}),
+        ("verify", [{"role": "system", "content": "只输出 JSON。"}, {"role": "user", "content": '{"claims":[]}'}], {"json_output": True, "tools": None}),
+    ]
+    ok = []
+    for name, messages, kwargs in shapes:
+        try:
+            await complete(settings, messages, tools=kwargs["tools"], json_output=kwargs["json_output"])
+        except ModelRequestError as exc:
+            raise LiveEvalConfigError(f"联网预检失败：{name} 请求被拒绝（HTTP {exc.status_code}）。{exc} 未开始正式题目。") from exc
+        except Exception as exc:
+            raise LiveEvalConfigError(f"联网预检失败：{name} 调用异常。{type(exc).__name__} 未开始正式题目。") from exc
+        ok.append(name)
+    return ok
+
+
 def summarize_cost(payloads: list[dict], prices: dict, catalog_size: int = 10) -> dict:
     by_system: dict[str, list[dict]] = {}
     for payload in payloads:
@@ -242,6 +269,12 @@ def summarize_cost(payloads: list[dict], prices: dict, catalog_size: int = 10) -
     tasks = {payload.get("task_id") for payload in payloads}
     total = round(sum(item["estimated_usd"] for item in systems.values()), 6)
     per_task = (total / len(tasks)) if tasks else 0.0
+    ceiling = next((item.get("token_ceiling") for item in payloads if item.get("token_ceiling")), None)
+    hits = [
+        f"{item.get('system')}:{item.get('task_id')}"
+        for item in payloads
+        if item.get("token_ceiling_hit")
+    ]
     return {
         "price_version": prices["version"],
         "as_of": prices.get("as_of"),
@@ -252,6 +285,8 @@ def summarize_cost(payloads: list[dict], prices: dict, catalog_size: int = 10) -
         "batch_estimated_usd": total,
         "projected_10_tasks_usd": round(per_task * catalog_size, 6),
         "projection_note": f"按本批 {len(tasks)} 题均值外推 {catalog_size} 题（含工作台与基线，重复次数与本批相同），仍是估价。",
+        "token_ceiling": ceiling,
+        "token_ceiling_hits": hits,
     }
 
 
@@ -264,4 +299,7 @@ def render_cost_summary(summary: dict) -> str:
     for name, item in (summary.get("systems") or {}).items():
         lines.append(f"- {name}：n={item['n']} 合计 ${item['estimated_usd']:.4f}，题均 ${item['mean_usd']:.4f}")
     lines.append(f"外推 10 题约 ${summary.get('projected_10_tasks_usd'):.4f}。{summary.get('projection_note')}")
+    if summary.get("token_ceiling"):
+        hits = ",".join(summary.get("token_ceiling_hits") or []) or "无"
+        lines.append(f"每题 token 顶 {summary['token_ceiling']}，触顶：{hits}。")
     return "\n".join(line for line in lines if line)
