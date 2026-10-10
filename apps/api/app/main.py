@@ -12,6 +12,7 @@ from .config import settings, Settings
 from .store import Store
 from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate, ArtifactEdit
 from .engine import Engine, coverage_matrix
+from .synthesis import attach_synthesis_counts, latest_synthesis_context
 from .tracing import get_tracing, init_tracing
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
@@ -99,7 +100,7 @@ def create_app(config: Settings | None = None):
         plan = run.get("plan") or {}
         run["waiting"] = plan.get("waiting") if run["status"] == "waiting_input" else None
         if plan.get("subjects") and plan.get("dimensions"):
-            run["coverage"] = coverage_matrix(plan, store().evidence(run_id))
+            run["coverage"] = attach_synthesis_counts(coverage_matrix(plan, store().evidence(run_id)), latest_synthesis_context(store(), run_id))
         versions = store().list_artifact_versions(run_id)
         if not versions and run.get("artifact"):
             store().add_artifact_version(run_id, run["project_id"], run["artifact"], origin="system")

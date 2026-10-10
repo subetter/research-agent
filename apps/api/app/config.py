@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = ""
     langfuse_redact: str = ""
+    synthesis_context_budget: int = Field(default=24000, ge=400, le=200000)
+    synthesis_quotes_per_cell: int = Field(default=2, ge=1, le=4)
 
     @property
     def tracing_enabled(self) -> bool:

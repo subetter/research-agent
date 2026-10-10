@@ -88,7 +88,7 @@ flowchart TD
 | plan | ResearchRequest 与 Skill 摘要 | ResearchPlan | 子问题可执行、维度可验收、预算合法 |
 | research | 子问题与上下文引用 | EvidenceBundle | 正文来源、定位、去重、工具权限 |
 | gap_check | 证据与覆盖矩阵 | GapAssessment | 未覆盖维度、来源冲突、证据时效 |
-| synthesize | 有效证据 | ClaimSet | 事实与推断分开，禁止凭空生成证据 ID |
+| synthesize | 按对象×维度选取的原文 | ClaimSet | 每格 1–2 条相关原文；转载去重；缺失格显式待确认；禁止凭空生成证据 ID |
 | verify | ClaimSet 与原文 | VerificationResult | ID 存在、摘录一致、语义支持人工抽样 |
 | render | 已校验结论与输出模板 | ArtifactVersion | 引用标记稳定，多个交付物共享结论 |
 
