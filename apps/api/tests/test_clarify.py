@@ -15,8 +15,9 @@ def test_infer_scope_skips_clarify_when_question_has_both():
     assert not needs_clarify("调研 ChatGPT、Gemini 和 Claude 的深度研究产品形态，比较研究流程与交付方式。", {})
 
 
-def test_vague_question_needs_clarify():
-    assert needs_clarify("帮我做一份行业观察，看看最近有什么值得关注的。", {"subjects": [], "dimensions": []})
+def test_open_topic_skips_clarify_but_comparison_does_not():
+    assert not needs_clarify("帮我做一份行业观察，看看最近有什么值得关注的。", {"subjects": [], "dimensions": []})
+    assert needs_clarify("比较几个竞品的定价和部署方式", {"subjects": [], "dimensions": []})
 
 
 async def wait_status(store, run_id, statuses, timeout=10):
@@ -34,7 +35,7 @@ async def test_clarify_interrupt_only_when_scope_missing(tmp_path):
     async with AsyncSqliteSaver.from_conn_string(str(tmp_path / "graph.sqlite")) as saver:
         engine = Engine(settings, store, saver)
         project = store.create_project("澄清", "")
-        request = {"question": "帮我做一份行业观察，看看最近有什么值得关注的。", "subjects": [], "dimensions": []}
+        request = {"question": "比较几个竞品的定价和部署方式", "subjects": [], "dimensions": []}
         run = store.create_run(project["id"], request["question"], "demo", {"request": request})
         engine.schedule(run["id"], {"run_id": run["id"], "request": request})
         ready = await wait_status(store, run["id"], {"waiting_input", "failed"})
@@ -97,7 +98,7 @@ async def test_clarify_http_then_plan_defaults(tmp_path):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             await client.post("/api/auth/register", json={"username": "test_admin", "display_name": "测试", "password": "test-password-123"})
             project = (await client.post("/api/projects", json={"name": "澄清接口"})).json()
-            created = await client.post(f"/api/projects/{project['id']}/runs", json={"question": "帮我看看最近行业里发生了什么"})
+            created = await client.post(f"/api/projects/{project['id']}/runs", json={"question": "比较几个竞品的定价和部署方式"})
             run = created.json()
             ready = await wait_status(app.state.store, run["id"], {"waiting_input"})
             body = (await client.get(f"/api/runs/{run['id']}")).json()

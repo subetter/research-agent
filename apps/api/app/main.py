@@ -11,7 +11,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
 from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate, ArtifactEdit
-from .engine import Engine, coverage_matrix
+from .engine import Engine, coverage_for_plan
+from .export import markdown_report, website_html, website_zip
 from .synthesis import attach_synthesis_counts, latest_synthesis_context
 from .tracing import get_tracing, init_tracing
 from .accounts import account_router, session_user, COOKIE
@@ -99,8 +100,8 @@ def create_app(config: Settings | None = None):
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
         plan = run.get("plan") or {}
         run["waiting"] = plan.get("waiting") if run["status"] == "waiting_input" else None
-        if plan.get("subjects") and plan.get("dimensions"):
-            run["coverage"] = attach_synthesis_counts(coverage_matrix(plan, store().evidence(run_id)), latest_synthesis_context(store(), run_id))
+        if (plan.get("mode") == "general" and plan.get("subquestions")) or (plan.get("subjects") and plan.get("dimensions")):
+            run["coverage"] = attach_synthesis_counts(coverage_for_plan(plan, store().evidence(run_id)), latest_synthesis_context(store(), run_id))
         versions = store().list_artifact_versions(run_id)
         if not versions and run.get("artifact"):
             store().add_artifact_version(run_id, run["project_id"], run["artifact"], origin="system")
@@ -353,17 +354,18 @@ def create_app(config: Settings | None = None):
             content = "\ufeff" + output.getvalue()
             suffix, mime = "csv", "text/csv"
         elif format == "markdown":
-            lines = [f"# {artifact['title']}", "", f"> 模式：{run['mode']}。{artifact['verification_note']}", "", artifact["summary"], ""]
-            for claim in artifact["claims"]:
-                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", f"核验：{claim.get('verification', '')}", "", "证据：" + ", ".join(claim["evidence_ids"]), ""])
-            lines.append("## 原文证据")
-            for ev in store().evidence(run_id):
-                lines.extend(["", f"### {ev['id']}", "", f"{ev['title']} · {ev['url']} · {ev['locator']}", "", ev["quote"], ""])
-            content = "\n".join(lines)
+            content = markdown_report(artifact, store().evidence(run_id), mode=run["mode"])
             suffix, mime = "md", "text/markdown"
+        elif format in {"html", "website"}:
+            content = website_html(artifact, store().evidence(run_id), mode=run["mode"], note=artifact.get("verification_note") or "")
+            suffix, mime = "html", "text/html; charset=utf-8"
+        elif format in {"website-zip", "zip"}:
+            payload = website_zip(artifact, store().evidence(run_id), mode=run["mode"], note=artifact.get("verification_note") or "")
+            return Response(payload, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{run_id}-website.zip"'})
         else:
-            raise HTTPException(400, "仅支持 markdown 或 csv")
-        return Response(content, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{run_id}.{suffix}"'})
+            raise HTTPException(400, "仅支持 markdown、csv、html、website 或 website-zip")
+        disposition = "inline" if format in {"html", "website"} else "attachment"
+        return Response(content, media_type=mime, headers={"Content-Disposition": f'{disposition}; filename="{run_id}.{suffix}"'})
 
     app.include_router(account_router(store))
     app.include_router(conversation_router(store, config))

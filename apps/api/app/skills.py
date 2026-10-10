@@ -115,8 +115,9 @@ def choose_skill(question: str, subjects: list[str] | None = None, dimensions: l
     names = {item["name"] for item in entries}
     subjects = [item for item in (subjects or []) if str(item).strip()]
     text = f"{question or ''} {' '.join(subjects)}"
-    if "competitor_analysis" in names and len(subjects) >= 2 and any(token in text for token in ("竞品", "对比", "比较", "调研", "competitor")):
-        return "competitor_analysis"
+    if "competitor_analysis" in names and (len(subjects) >= 2 or any(token in text for token in ("竞品", "对比", "比较", "对照", "competitor"))):
+        if any(token in text for token in ("竞品", "对比", "比较", "对照", "competitor")) or len(subjects) >= 2:
+            return "competitor_analysis"
     if "industry_landscape" in names and any(token in text for token in ("行业", "格局", "landscape", "产业", "行业观点")):
         return "industry_landscape"
     if "research_report" in names:

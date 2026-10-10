@@ -2,7 +2,7 @@
 name: industry_landscape
 version: "1"
 title: 行业格局
-when_to_use: 梳理一个行业或品类的玩家、价值链与进入壁垒，而不是两两产品对照。
+when_to_use: 梳理一个行业或品类的玩家、价值链与进入壁垒。默认用开放深挖（general）拆子问题；只有用户点名多个对照对象时才用 grid。
 required_dimensions: 产品定位,目标用户,核心能力
 allowed_tools: search_web,read_source,search_project
 output_schema: {"type":"object","required":["summary","claims"],"properties":{"summary":{"type":"string"},"claims":{"type":"array"}}}
