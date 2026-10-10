@@ -10,7 +10,7 @@ from .scope import apply_plan_defaults, truncate
 from .skills import allowed_tools_for, choose_skill, inject_skill, load_skill, skill_catalog, skill_prompt
 from .store import uid
 from .synthesis import SYNTHESIS_SYSTEM, build_synthesis_context, inspect_payload, model_payload
-from .tracing import get_tracing
+from .tracing import get_tracing, reasoning_tokens
 
 REPORT_KEYS = {"synthesize", "verify"}
 LIVE_VERDICTS = {"fully", "partial", "contradicted", "unrelated"}
@@ -148,9 +148,17 @@ class Provider:
         try:
             body = await complete(self.settings, messages, tools=tools, json_output=not tools)
             result = body["choices"][0]["message"]
+            usage = body.get("usage") or {}
+            tokens = int(usage.get("total_tokens") or 0)
             self.store.save_operation(run_id, key, result)
-            self.store.settle(run_id, key, body.get("usage", {}).get("total_tokens", 0))
-            self.store.event(run_id, "model.finished", {"operation": key, "tokens": body.get("usage", {}).get("total_tokens", 0)})
+            self.store.settle(run_id, key, tokens)
+            self.store.event(run_id, "model.finished", {
+                "operation": key,
+                "tokens": tokens,
+                "prompt_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                "completion_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                "reasoning_tokens": reasoning_tokens(usage),
+            })
             return result
         except Exception:
             self.store.settle(run_id, key, status="unknown")

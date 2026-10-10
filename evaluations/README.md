@@ -45,6 +45,26 @@ cd evaluations
 
 `run.py` 写出每题每系统每次重复的 artifact JSON，打印结果表，并更新本目录 `RESULTS.md`。`results/work/` 是临时 SQLite，不入库。
 
+## 联网评测（可选）
+
+默认仍是离线回放。`--live` 才走仓库根目录 `.env` 的 `LLM_API_KEY` / `LLM_MODEL` / `TAVILY_API_KEY`。缺任一密钥直接拒绝启动，不回落演示，也不打印密钥。
+
+题面与离线集相同，但搜索和模型是真请求，不使用夹具里的原文、回放主张或 `page_subjects`。工作台与基线 A 同一预算。联网默认每题 1 次。未指定 `--tasks` 时冒烟三题：`comp-chatgpt-gemini`（竞品）、`miss-inkbot-price`（缺失）、`conf-price`（冲突）。
+
+费用按配置里的 DeepSeek + Tavily 估价表计算，带版本与日期，**不是账单**。会打印本批费用，并按本批题均外推 10 题。结果写到 `evaluations/results/live-<UTC时间戳>/`（已 gitignore），含 `samples.csv`（最多 30 条已引用结论，空着 `human_label` 供人工标注）。填完后：
+
+```bash
+../apps/api/.venv/bin/python agreement.py results/live-<时间戳>/samples.csv
+```
+
+本机三题冒烟（在仓库根目录，`.env` 已填密钥）：
+
+```bash
+apps/api/.venv/bin/python evaluations/run.py --live --tasks comp-chatgpt-gemini miss-inkbot-price conf-price --repeats 1
+```
+
+CI 与默认 `pytest` 不会发真实请求。
+
 ## 不在范围内
 
-子图检查点、Langfuse / LangSmith、MCP、Postgres、24 题消融与人工标注对。不改计划中断 / 覆盖 / 核验行为，harness 只调用现有图。
+子图检查点、Langfuse / LangSmith、MCP、Postgres、24 题消融。联网人工标注只提供抽样表与一致率脚本，不自动打分。不改计划中断 / 覆盖 / 核验行为，harness 只调用现有图。
