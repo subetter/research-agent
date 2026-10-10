@@ -4,6 +4,8 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
 from .providers import Provider, dimension_covers
+from .report import attach_report
+from .research_mode import claim_pairs, coverage_subquestions, find_subquestion, flatten_subquestions
 from .scope import apply_plan_defaults, infer_scope, needs_clarify
 from .store import infer_dimensions_from_title, normalize_dimensions, subject_from_task_key, uid
 from .synthesis import attach_synthesis_counts, latest_synthesis_context
@@ -52,7 +54,7 @@ def subject_summary(result: dict) -> dict:
 
 
 def slim_plan(plan: dict) -> dict:
-    keys = ("goal", "subjects", "dimensions", "max_search_calls", "max_gap_rounds", "skill_name", "skill_version", "as_of", "regions")
+    keys = ("goal", "mode", "subjects", "dimensions", "questions", "subquestions", "max_search_calls", "max_gap_rounds", "max_followup_rounds", "skill_name", "skill_version", "as_of", "regions")
     return {key: plan[key] for key in keys if key in plan}
 
 
@@ -75,6 +77,7 @@ def coverage_matrix(plan, evidence):
                 cells[(subject, dimension)].append(item["id"])
     gaps = [{"subject": subject, "dimension": dimension} for (subject, dimension), ids in cells.items() if not ids]
     return {
+        "mode": "grid",
         "subjects": subjects,
         "dimensions": dimensions,
         "cells": [{"subject": subject, "dimension": dimension, "evidence_ids": ids, "covered": bool(ids)} for (subject, dimension), ids in cells.items()],
@@ -84,7 +87,24 @@ def coverage_matrix(plan, evidence):
     }
 
 
+def coverage_for_plan(plan, evidence):
+    if (plan or {}).get("mode") == "general" and flatten_subquestions(plan):
+        return coverage_subquestions(plan, evidence)
+    return coverage_matrix(plan, evidence)
+
+
 def research_targets(plan, gaps):
+    if (plan or {}).get("mode") == "general":
+        questions = flatten_subquestions(plan)
+        if gaps:
+            wanted = set()
+            for gap in gaps:
+                if isinstance(gap, str):
+                    wanted.add(gap)
+                    continue
+                wanted.add(gap.get("subquestion_id") or gap.get("subject"))
+            questions = [item for item in questions if item["id"] in wanted]
+        return [(item["id"], [item["question"]]) for item in questions]
     if not gaps:
         return [(subject, list(plan["dimensions"])) for subject in plan["subjects"]]
     grouped = {}
@@ -110,11 +130,23 @@ VERIFICATION_VALUES = {"fully", "partial", "contradicted", "unrelated", "referen
 
 def validate_claims(plan, bundle, evidence):
     valid = {e["id"] for e in evidence}
+    pairs = claim_pairs(plan)
+    allowed = set(pairs)
     seen = set()
     claims = []
+    general = (plan or {}).get("mode") == "general"
     for claim in bundle.get("claims", []):
-        pair = (claim["subject"], claim["dimension"])
-        if pair in seen or pair[0] not in plan["subjects"] or pair[1] not in plan["dimensions"]:
+        if general:
+            node = find_subquestion(plan, claim.get("subquestion_id") or claim.get("subject"))
+            if not node:
+                continue
+            pair = (node["id"], node["question"])
+            claim = {**claim, "subject": node["id"], "dimension": node["question"], "subquestion_id": node["id"]}
+        else:
+            pair = (claim["subject"], claim["dimension"])
+            if pair[0] not in (plan.get("subjects") or []) or pair[1] not in (plan.get("dimensions") or []):
+                continue
+        if pair in seen or pair not in allowed:
             continue
         seen.add(pair)
         original = claim.get("evidence_ids", [])
@@ -137,10 +169,10 @@ def validate_claims(plan, bundle, evidence):
             else:
                 item["verification"] = "reference_checked"
         claims.append(item)
-    for subject in plan["subjects"]:
-        for dimension in plan["dimensions"]:
-            if (subject, dimension) not in seen:
-                claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "kind": "unknown", "verification": "unconfirmed"})
+    for subject, dimension in pairs:
+        if (subject, dimension) not in seen:
+            extra = {"subquestion_id": subject} if general else {}
+            claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "kind": "unknown", "verification": "unconfirmed", **extra})
     return claims
 
 
@@ -274,7 +306,16 @@ class Engine:
         plan = apply_plan_defaults(plan, request.get("question") or run["question"])
         self.store.update(run["id"], plan=plan)
         self.store.event(run["id"], "skill.selected", {"skill_name": plan.get("skill_name"), "skill_version": plan.get("skill_version")})
-        self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"], "as_of": plan.get("as_of"), "regions": plan.get("regions"), "skill_name": plan.get("skill_name"), "skill_version": plan.get("skill_version")})
+        self.store.event(run["id"], "plan.proposed", {
+            "mode": plan.get("mode") or "grid",
+            "subjects": plan["subjects"],
+            "dimensions": plan["dimensions"],
+            "subquestions": [item["id"] for item in flatten_subquestions(plan)],
+            "as_of": plan.get("as_of"),
+            "regions": plan.get("regions"),
+            "skill_name": plan.get("skill_name"),
+            "skill_version": plan.get("skill_version"),
+        })
         return {"plan": plan, "round": 0}
 
     async def approve(self, state):
@@ -295,7 +336,10 @@ class Engine:
 
         async def subject_task(subject, dimensions):
             async with semaphore:
-                if state.get("round", 0) == 0 and parent and parent["artifact"] and parent["mode"] == run["mode"] and parent["plan"]["dimensions"] == plan["dimensions"] and subject in parent["plan"]["subjects"]:
+                parent_plan = (parent or {}).get("plan") or {}
+                same_grid = parent and parent.get("artifact") and parent["mode"] == run["mode"] and parent_plan.get("mode", "grid") != "general" and parent_plan.get("dimensions") == plan.get("dimensions") and subject in (parent_plan.get("subjects") or [])
+                same_general = parent and parent.get("artifact") and parent["mode"] == run["mode"] and plan.get("mode") == "general" and parent_plan.get("mode") == "general" and subject in {item["id"] for item in flatten_subquestions(parent_plan)}
+                if state.get("round", 0) == 0 and (same_grid or same_general):
                     # Reuse only parent evidence, retaining original fetch time. Live sources expire after a day.
                     from datetime import datetime, timezone, timedelta
                     old = [e for e in self.store.evidence(parent["id"]) if e["task_key"].startswith(f"research:{subject}:")]
@@ -333,7 +377,7 @@ class Engine:
     async def _gap_check(self, state):
         await self.gate(state["run_id"])
         evidence = self.store.evidence(state["run_id"])
-        coverage = coverage_matrix(state["plan"], evidence)
+        coverage = coverage_for_plan(state["plan"], evidence)
         gaps = coverage["gaps"]
         current_round = state.get("round", 0)
         model_left = self.store.usage_count(state["run_id"], "model") < self.settings.max_model_calls - self.settings.report_reserved_calls
@@ -341,10 +385,11 @@ class Engine:
         more = bool(gaps and model_left and search_left and current_round < state["plan"]["max_gap_rounds"])
         covered_subjects = {item["subject"] for item in coverage["cells"] if item["covered"]}
         self.store.event(state["run_id"], "coverage.checked", {
+            "mode": coverage.get("mode") or state["plan"].get("mode") or "grid",
             "cells_covered": coverage["covered"],
             "cells_total": coverage["total"],
             "subjects_with_evidence": len(covered_subjects),
-            "subjects_total": len(state["plan"]["subjects"]),
+            "subjects_total": len(coverage.get("subjects") or state["plan"].get("subjects") or []),
             "gaps": gaps,
             "will_retry": more,
         })
@@ -397,9 +442,19 @@ class Engine:
         evidence = self.store.evidence(run["id"])
         claims = validate_claims(state["plan"], state["bundle"], evidence)
         unknown = sum(c["kind"] == "unknown" for c in claims)
-        coverage = attach_synthesis_counts(coverage_matrix(state["plan"], evidence), latest_synthesis_context(self.store, run["id"]))
+        coverage = attach_synthesis_counts(coverage_for_plan(state["plan"], evidence), latest_synthesis_context(self.store, run["id"]))
         supported = sum(c.get("verification") in {"fully", "partial", "reference_checked"} for c in claims)
-        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": verification_note(run["mode"]), "coverage": coverage, "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]}}
+        artifact = {
+            "title": run["question"],
+            "summary": state["bundle"].get("summary", ""),
+            "claims": claims,
+            "mode": run["mode"],
+            "research_mode": state["plan"].get("mode") or "grid",
+            "verification_note": verification_note(run["mode"]),
+            "coverage": coverage,
+            "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims), "supported": supported, "cells_covered": coverage["covered"], "cells_total": coverage["total"]},
+        }
+        artifact = attach_report(artifact, state["plan"], evidence, state["bundle"])
         self.store.add_artifact_version(run["id"], run["project_id"], artifact, origin="system")
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         tracing = get_tracing()

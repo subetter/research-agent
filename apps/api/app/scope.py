@@ -62,8 +62,9 @@ def infer_scope(question: str, request: dict | None = None) -> tuple[list[str], 
 
 
 def needs_clarify(question: str, request: dict | None = None) -> bool:
-    subjects, dimensions = infer_scope(question, request)
-    return not subjects or not dimensions
+    from .research_mode import needs_clarify as mode_needs_clarify
+
+    return mode_needs_clarify(question, request)
 
 
 def apply_plan_defaults(plan: dict, question: str = "") -> dict:
