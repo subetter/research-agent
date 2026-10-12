@@ -15,6 +15,8 @@ from .engine import Engine
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
+from .freshness import annotate_evidence
+from .conflicts import detect_conflicts
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
 
@@ -94,6 +96,11 @@ def create_app(config: Settings | None = None):
         if not run:
             raise HTTPException(404, "任务不存在")
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
+        run["claim_evidence"] = store().claim_evidence(run_id)
+        artifact = run.get("artifact") or {}
+        if artifact and "conflicts" not in artifact:
+            artifact["conflicts"] = detect_conflicts(run.get("plan") or {}, store().evidence(run_id))
+            run["artifact"] = artifact
         return run
 
     @app.get("/api/health")
@@ -179,8 +186,8 @@ def create_app(config: Settings | None = None):
 
     @app.get("/api/runs/{run_id}/evidence")
     def evidence(run_id: str):
-        get_run(run_id)
-        return store().evidence(run_id)
+        run = get_run(run_id)
+        return annotate_evidence(store().evidence(run_id), run.get("plan"))
 
     @app.get("/api/runs/{run_id}/events")
     async def events(run_id: str, request: Request, after: int = 0):
@@ -236,9 +243,9 @@ def create_app(config: Settings | None = None):
         if format == "csv":
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow(["模式", "对象", "维度", "结论", "类型", "证据 ID"])
+            writer.writerow(["模式", "对象", "维度", "结论", "类型", "支持证据", "冲突证据"])
             for claim in artifact["claims"]:
-                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], ";".join(claim["evidence_ids"])]
+                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], ";".join(claim.get("evidence_ids") or []), ";".join(claim.get("conflict_evidence_ids") or [])]
                 # Spreadsheet formula injection protection.
                 writer.writerow(["'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value for value in values])
             content = "\ufeff" + output.getvalue()
@@ -246,10 +253,18 @@ def create_app(config: Settings | None = None):
         elif format == "markdown":
             lines = [f"# {artifact['title']}", "", f"> 模式：{run['mode']}。{artifact['verification_note']}", "", artifact["summary"], ""]
             for claim in artifact["claims"]:
-                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", "证据：" + ", ".join(claim["evidence_ids"]), ""])
+                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", "支持证据：" + ", ".join(claim.get("evidence_ids") or []), "", "冲突证据：" + ", ".join(claim.get("conflict_evidence_ids") or []), ""])
+            if artifact.get("conflicts"):
+                lines.extend(["## 来源冲突", ""])
+                for conflict in artifact["conflicts"]:
+                    lines.append(f"### {conflict['subject']} · {conflict['dimension']}")
+                    for position in conflict.get("positions") or []:
+                        lines.extend(["", f"- {position.get('label')}（{position.get('freshness') or 'unknown'}）：{position.get('text')}", "  证据：" + ", ".join(position.get("evidence_ids") or [])])
+                    lines.append("")
             lines.append("## 原文证据")
-            for ev in store().evidence(run_id):
-                lines.extend(["", f"### {ev['id']}", "", f"{ev['title']} · {ev['url']} · {ev['locator']}", "", ev["quote"], ""])
+            for ev in annotate_evidence(store().evidence(run_id), run.get("plan")):
+                published = ev.get("published_at") or "未标注"
+                lines.extend(["", f"### {ev['id']}", "", f"{ev['title']} · {ev['url']} · {ev['locator']}", "", f"发布：{published} · 获取：{ev.get('fetched_at')} · 时效：{ev.get('freshness_label') or ev.get('freshness')}", "", ev["quote"], ""])
             content = "\n".join(lines)
             suffix, mime = "md", "text/markdown"
         else:

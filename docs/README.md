@@ -13,7 +13,7 @@
 
 ## 设计与实现的区别
 
-01–03 是开发前的目标设计，不代表所有技术已经落地。当前实现采用 Next.js、FastAPI、LangGraph 和 SQLite；PostgreSQL、pgvector、Redis/Celery、MCP 和 Langfuse 等属于后续建设计划。
+01–03 是开发前的目标设计，不代表所有技术已经落地。当前实现采用 Next.js、FastAPI、LangGraph 和 SQLite；PostgreSQL、pgvector、Redis/Celery、MCP 和 Langfuse 等属于后续建设计划。来源冲突与证据时效已按设计落地到现有 SQLite 表与 `gap_check`，见 README 与 `04-development-status.md` 的增量说明。
 
 当前联网搜索工具用于深度研究；普通会话调用模型并支持流式显示，尚未接入联网搜索工具。运行和配置说明以[项目 README](../README.md)为准。密钥仅保存在本地配置中，不写入设计文档。
 
