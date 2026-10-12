@@ -121,7 +121,7 @@ Agentic RAG 的含义是由 Agent 根据问题和证据缺口选择是否检索�
 
 每个 chunk 保留 document_version_id、page、paragraph、行列范围或字符偏移。每次研究记录来源快照；网页被更新后，历史引用仍指向当时读取的快照。
 
-网络来源按 canonical URL 与正文哈希去重。搜索摘要用于发现来源，只有成功读取正文才能作为事实依据。官方公告、原始论文、产品文档优先；多个转载来源记录共同上游，避免重复计数。发布时间未知时保留为空，不用获取时间替代发布时间。
+网络来源按 canonical URL 与正文哈希去重。搜索摘要用于发现来源，只有成功读取正文才能作为事实依据。官方公告、原始论文、产品文档优先；多个转载来源记录共同上游，避免重复计数。发布时间未知时保留为空，不用获取时间替代发布时间。首版 SQLite 将 `published_at` 存在 `evidence` 行上（与 `fetched_at` 并列），搜索工具仅在 Tavily 返回 `published_date` 时写入；增量复用按发布时间与计划 `as_of` / `max_evidence_age_days` 判断，不用获取时间充当发布日期。
 
 ## 证据与成果模型
 
@@ -138,7 +138,7 @@ Agentic RAG 的含义是由 Agent 根据问题和证据缺口选择是否检索�
 | runs | project_id、status、revision、plan_version_id、parent_run_id、budget、lease_epoch | 任务事实与并发控制 |
 | plan_versions、research_tasks | run_id、scope、dimensions、dependencies、status | 计划与子任务 |
 | evidence | task_id、source_version_id、locator、quote、hash | 可核对原文 |
-| claims、claim_evidence | run_id、subject、dimension、text、type、status、evidence_id、relation | 结论与支持或冲突关系 |
+| claims、claim_evidence | run_id、subject、dimension、text、type、status、evidence_id、relation | 结论与支持或冲突关系。首版 SQLite 已落地 `claim_evidence(run_id,claim_id,evidence_id,relation)`，`relation` 为 support 或 conflict |
 | artifact_versions | project_id、run_id、parent_version_id、content_json、object_key、origin | 成果版本与编辑来源 |
 | tool_operations | run_id、task_id、idempotency_key、status、input_hash、result_ref | 工具幂等与恢复 |
 | usage_ledger | operation_id、reserved、actual、provider、tokens、price_version | 预算预留与实际用量 |

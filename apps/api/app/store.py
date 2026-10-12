@@ -75,6 +75,19 @@ class Store:
             if "owner_id" not in columns:
                 self.conn.execute("ALTER TABLE projects ADD COLUMN owner_id TEXT REFERENCES users(id)")
             self.conn.execute("CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id)")
+            evidence_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(evidence)")}
+            if "published_at" not in evidence_columns:
+                self.conn.execute("ALTER TABLE evidence ADD COLUMN published_at TEXT")
+            if "dimension" not in evidence_columns:
+                self.conn.execute("ALTER TABLE evidence ADD COLUMN dimension TEXT")
+            self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS claim_evidence (
+              run_id TEXT NOT NULL,
+              claim_id TEXT NOT NULL,
+              evidence_id TEXT NOT NULL,
+              relation TEXT NOT NULL CHECK(relation IN ('support','conflict')),
+              PRIMARY KEY (run_id, claim_id, evidence_id, relation)
+            )""")
 
     def close(self):
         self.conn.close()
@@ -177,17 +190,33 @@ class Store:
             self.conn.execute("UPDATE usage SET status=?,tokens=? WHERE run_id=? AND key=?", (status, tokens, run_id, key))
 
     def add_evidence(self, project_id, run_id, task_key, item):
+        from .freshness import parse_published_at
+        published_at = parse_published_at(item.get("published_at"))
         with self.lock, self.conn:
             existing = self.conn.execute("SELECT id FROM evidence WHERE run_id=? AND task_key=? AND url=? AND locator=?", (run_id, task_key, item["url"], item["locator"])).fetchone()
             if existing:
                 return existing[0]
             evidence_id = uid("ev")
-            self.conn.execute("INSERT INTO evidence VALUES(?,?,?,?,?,?,?,?,?,?)", (evidence_id, project_id, run_id, task_key, item["title"], item["url"], item["quote"], item["locator"], item["source_type"], item.get("fetched_at", now())))
-            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"]})
+            self.conn.execute(
+                "INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,published_at,dimension) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (evidence_id, project_id, run_id, task_key, item["title"], item["url"], item["quote"], item["locator"], item["source_type"], item.get("fetched_at", now()), published_at, item.get("dimension")),
+            )
+            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"], "published_at": published_at})
             return evidence_id
 
     def evidence(self, run_id):
         return self.query("SELECT * FROM evidence WHERE run_id=? ORDER BY rowid", (run_id,))
+
+    def replace_claim_evidence(self, run_id, rows):
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM claim_evidence WHERE run_id=?", (run_id,))
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO claim_evidence(run_id,claim_id,evidence_id,relation) VALUES(?,?,?,?)",
+                [(run_id, row["claim_id"], row["evidence_id"], row["relation"]) for row in rows],
+            )
+
+    def claim_evidence(self, run_id):
+        return self.query("SELECT claim_id,evidence_id,relation FROM claim_evidence WHERE run_id=? ORDER BY rowid", (run_id,))
 
     def add_document(self, project_id, name, content):
         document_id = uid("doc")

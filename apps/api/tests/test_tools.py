@@ -18,7 +18,7 @@ async def test_tool_loop_requires_raw_source(tmp_path, raw, expected):
     async def fake_chat(*args, **kwargs):
         return next(answers)
     async def fake_search(*args, **kwargs):
-        return {"results": [{"title": "官方文档", "url": "https://example.com/product", "snippet": "搜索摘要不能直接作为证据", "raw_content": raw}]}
+        return {"results": [{"title": "官方文档", "url": "https://example.com/product", "snippet": "搜索摘要不能直接作为证据", "raw_content": raw, "published_at": "2024-06-01" if raw else None}]}
     async def gate():
         pass
     provider.chat = fake_chat
@@ -29,5 +29,7 @@ async def test_tool_loop_requires_raw_source(tmp_path, raw, expected):
     if expected:
         assert evidence[0]["quote"] == raw
         assert evidence[0]["locator"].startswith("chars:")
+        assert evidence[0]["published_at"] == "2024-06-01T00:00:00+00:00"
+        assert evidence[0]["published_at"] != evidence[0]["fetched_at"]
     assert not any("搜索摘要" in e["quote"] for e in evidence)
     store.close()

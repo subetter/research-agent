@@ -3,6 +3,8 @@ import logging
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command, interrupt
+from .conflicts import assess_gaps, detect_conflicts
+from .freshness import annotate_evidence, can_reuse_evidence
 from .providers import Provider
 from .store import uid
 
@@ -25,6 +27,7 @@ class ResearchState(TypedDict, total=False):
     round: int
     bundle: dict
     gaps: list[str]
+    gap_assessment: dict
 
 
 def validate_claims(plan, bundle, evidence):
@@ -38,7 +41,8 @@ def validate_claims(plan, bundle, evidence):
         seen.add(pair)
         original = claim.get("evidence_ids", [])
         ids = list(dict.fromkeys(x for x in original if x in valid))
-        item = {**claim, "id": uid("claim"), "evidence_ids": ids}
+        conflict_ids = list(dict.fromkeys(x for x in claim.get("conflict_evidence_ids", []) if x in valid and x not in ids))
+        item = {**claim, "id": uid("claim"), "evidence_ids": ids, "conflict_evidence_ids": conflict_ids}
         if len(ids) != len(set(original)) or (claim["kind"] == "fact" and not ids):
             item["kind"] = "unknown"
             item["text"] = "待确认：引用缺失或引用 ID 不合法，原结论未通过结构校验。"
@@ -47,7 +51,7 @@ def validate_claims(plan, bundle, evidence):
     for subject in plan["subjects"]:
         for dimension in plan["dimensions"]:
             if (subject, dimension) not in seen:
-                claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "kind": "unknown", "verification": "unconfirmed"})
+                claims.append({"id": uid("claim"), "subject": subject, "dimension": dimension, "text": "未确认：未取得足够证据。", "evidence_ids": [], "conflict_evidence_ids": [], "kind": "unknown", "verification": "unconfirmed"})
     return claims
 
 
@@ -104,11 +108,9 @@ class Engine:
         async def subject_task(subject):
             async with semaphore:
                 if state.get("round", 0) == 0 and parent and parent["artifact"] and parent["mode"] == run["mode"] and parent["plan"]["dimensions"] == plan["dimensions"] and subject in parent["plan"]["subjects"]:
-                    # Reuse only parent evidence, retaining original fetch time. Live sources expire after a day.
-                    from datetime import datetime, timezone, timedelta
+                    # Reuse parent evidence when freshness policy allows. Fetch time is never treated as publish time.
                     old = [e for e in self.store.evidence(parent["id"]) if e["task_key"].startswith(f"research:{subject}:")]
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=1)
-                    old = [e for e in old if run["mode"] == "demo" or datetime.fromisoformat(e["fetched_at"]) >= cutoff]
+                    old = [e for e in old if can_reuse_evidence(e, plan, run["mode"])]
                     if old:
                         ids = [self.store.add_evidence(run["project_id"], run["id"], f"research:{subject}:0", e) for e in old]
                         self.store.event(run["id"], "task.reused", {"subject": subject, "reason": "父任务相同维度的有效证据"})
@@ -137,13 +139,23 @@ class Engine:
     async def gap_check(self, state):
         await self.gate(state["run_id"])
         evidence = self.store.evidence(state["run_id"])
-        gaps = [s for s in state["plan"]["subjects"] if not any(e["task_key"].startswith(f"research:{s}:") for e in evidence)]
+        assessment = assess_gaps(state["plan"], evidence)
+        gaps = assessment["gaps"]
         current_round = state.get("round", 0)
         model_left = self.store.usage_count(state["run_id"], "model") < self.settings.max_model_calls - self.settings.report_reserved_calls
         search_left = self.store.usage_count(state["run_id"], "search") < state["plan"]["max_search_calls"]
         more = bool(gaps and model_left and search_left and current_round < state["plan"]["max_gap_rounds"])
-        self.store.event(state["run_id"], "coverage.checked", {"subjects_with_evidence": len(state["plan"]["subjects"]) - len(gaps), "subjects_total": len(state["plan"]["subjects"]), "gaps": gaps, "will_retry": more})
-        return {"gaps": gaps if more else [], "round": current_round + 1}
+        payload = {
+            "subjects_with_evidence": len(state["plan"]["subjects"]) - len([item for item in assessment["uncovered"] if item["dimension"] is None]),
+            "subjects_total": len(state["plan"]["subjects"]),
+            "gaps": gaps if more else [],
+            "uncovered": assessment["uncovered"],
+            "conflicts": [{"subject": item["subject"], "dimension": item["dimension"]} for item in assessment["conflicts"]],
+            "freshness_gaps": assessment["freshness_gaps"],
+            "will_retry": more,
+        }
+        self.store.event(state["run_id"], "coverage.checked", payload)
+        return {"gaps": gaps if more else [], "round": current_round + 1, "gap_assessment": {**assessment, "will_retry": more}}
 
     def route(self, state):
         return "research" if state.get("gaps") else "synthesize"
@@ -160,8 +172,47 @@ class Engine:
         await self.gate(run["id"])
         evidence = self.store.evidence(run["id"])
         claims = validate_claims(state["plan"], state["bundle"], evidence)
+        annotated = annotate_evidence(evidence, state["plan"])
+        conflicts = detect_conflicts(state["plan"], annotated)
+        links = []
+        for claim in claims:
+            for evidence_id in claim.get("evidence_ids") or []:
+                links.append({"claim_id": claim["id"], "evidence_id": evidence_id, "relation": "support"})
+            extra = list(claim.get("conflict_evidence_ids") or [])
+            for conflict in conflicts:
+                if conflict["subject"] == claim["subject"] and conflict["dimension"] == claim["dimension"]:
+                    supporting = set(claim.get("evidence_ids") or [])
+                    for position in conflict["positions"]:
+                        for evidence_id in position["evidence_ids"]:
+                            if evidence_id not in supporting and evidence_id not in extra:
+                                extra.append(evidence_id)
+            claim["conflict_evidence_ids"] = extra
+            if extra and claim["kind"] == "fact":
+                claim["kind"] = "analysis"
+            for evidence_id in extra:
+                links.append({"claim_id": claim["id"], "evidence_id": evidence_id, "relation": "conflict"})
+        self.store.replace_claim_evidence(run["id"], links)
         unknown = sum(c["kind"] == "unknown" for c in claims)
-        artifact = {"title": run["question"], "summary": state["bundle"].get("summary", ""), "claims": claims, "mode": run["mode"], "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。", "metrics": {"claims": len(claims), "evidence": len(evidence), "unknown": unknown, "with_references": sum(bool(c["evidence_ids"]) for c in claims)}}
+        assessment = state.get("gap_assessment") or assess_gaps(state["plan"], annotated)
+        artifact = {
+            "title": run["question"],
+            "summary": state["bundle"].get("summary", ""),
+            "claims": claims,
+            "conflicts": conflicts,
+            "gap_assessment": assessment,
+            "mode": run["mode"],
+            "verification_note": "仅校验引用存在性与结构；语义支持仍需人工核对。冲突口径并列保留，不合并为单一答案。",
+            "metrics": {
+                "claims": len(claims),
+                "evidence": len(evidence),
+                "unknown": unknown,
+                "with_references": sum(bool(c["evidence_ids"]) for c in claims),
+                "conflicts": len(conflicts),
+                "stale_evidence": assessment.get("stale_evidence", 0),
+                "undated_evidence": assessment.get("undated_evidence", 0),
+                "fresh_evidence": assessment.get("fresh_evidence", 0),
+            },
+        }
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         return {}
 
