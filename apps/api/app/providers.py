@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 import hashlib
 from urllib.parse import urlparse
 import httpx
@@ -9,6 +8,7 @@ from .schemas import ResearchPlan, ClaimBundle
 from .llm import complete
 from .freshness import parse_published_at
 from .conflicts import detect_conflicts, is_conflict_dimension
+from .project_mcp import ProjectToolServer
 
 
 class BudgetExceeded(RuntimeError):
@@ -101,14 +101,7 @@ class Provider:
             raise
 
     def local_search(self, project_id, query):
-        terms = re.findall(r"[\w\u4e00-\u9fff]+", query.lower())
-        candidates = []
-        for doc in self.store.query("SELECT * FROM documents WHERE project_id=?", (project_id,)):
-            for index, paragraph in enumerate(doc["content"].split("\n\n")):
-                if paragraph.strip():
-                    score = sum(term in paragraph.lower() for term in terms)
-                    candidates.append((score, {"title": doc["name"], "url": f"project://{doc['id']}", "quote": paragraph[:2000], "locator": f"paragraph:{index + 1}", "source_type": "document"}))
-        return [entry for _, entry in sorted(candidates, key=lambda x: x[0], reverse=True)[:4]]
+        return ProjectToolServer(self.store, self.settings, project_id).search_project(query)
 
     async def research(self, run, plan, subject, round_index, gate):
         key = f"research:{subject}:{round_index}"
@@ -138,6 +131,10 @@ class Provider:
                 else:
                     follow = {"title": f"{subject} · {dimension} · 补充检索", "url": f"https://example.com/demo/{digest}/followup", "quote": f"【模拟资料】补充检索：{subject} 的「{dimension}」仍存在多种口径，已按原文并列保留，不合并为单一数字。", "locator": f"paragraph:followup-{index + 1}", "source_type": "demo", "dimension": dimension, "published_at": as_of}
                     evidence_ids.append(self.store.add_evidence(run["project_id"], run["id"], key, follow))
+            if self.store.ready_documents(run["project_id"]):
+                query = " ".join([subject, *(plan.get("dimensions") or [])])
+                for item in self.local_search(run["project_id"], query):
+                    evidence_ids.append(self.store.add_evidence(run["project_id"], run["id"], key, item))
             result = {"subject": subject, "evidence_ids": evidence_ids, "error": None}
         else:
             result = await self.live_research(run, plan, subject, round_index, gate)

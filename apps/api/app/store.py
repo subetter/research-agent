@@ -88,6 +88,7 @@ class Store:
               relation TEXT NOT NULL CHECK(relation IN ('support','conflict')),
               PRIMARY KEY (run_id, claim_id, evidence_id, relation)
             )""")
+            self._migrate_documents()
 
     def close(self):
         self.conn.close()
@@ -218,8 +219,131 @@ class Store:
     def claim_evidence(self, run_id):
         return self.query("SELECT claim_id,evidence_id,relation FROM claim_evidence WHERE run_id=? ORDER BY rowid", (run_id,))
 
-    def add_document(self, project_id, name, content):
+    def _migrate_documents(self):
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(documents)")}
+        extras = {
+            "status": "TEXT DEFAULT 'ready'",
+            "error": "TEXT",
+            "content_hash": "TEXT",
+            "parser_version": "TEXT",
+            "source_type": "TEXT DEFAULT 'text'",
+            "page_count": "INTEGER",
+            "bytes": "INTEGER",
+        }
+        for name, spec in extras.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {spec}")
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS document_chunks (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES documents(id),
+          project_id TEXT NOT NULL,
+          page INTEGER,
+          paragraph INTEGER,
+          char_start INTEGER,
+          char_end INTEGER,
+          locator TEXT NOT NULL,
+          text TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          embedding BLOB,
+          embedding_model TEXT NOT NULL,
+          index_version TEXT NOT NULL,
+          UNIQUE(document_id, locator)
+        )""")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_project_model_idx ON document_chunks(project_id, embedding_model, index_version)")
+        self.conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(text, chunk_id UNINDEXED, project_id UNINDEXED, tokenize='unicode61')")
+
+    def document(self, document_id):
+        rows = self.query("SELECT * FROM documents WHERE id=?", (document_id,))
+        if not rows:
+            return None
+        return self._present_document(rows[0])
+
+    def _present_document(self, row):
+        item = dict(row)
+        item["characters"] = len(item.get("content") or "")
+        return item
+
+    def list_documents(self, project_id):
+        rows = self.query("SELECT * FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))
+        return [self._present_document(row) for row in rows]
+
+    def create_document(self, project_id, name, status="processing", source_type="text", bytes=0, content_hash=None):
         document_id = uid("doc")
         with self.lock, self.conn:
-            self.conn.execute("INSERT INTO documents VALUES(?,?,?,?,?)", (document_id, project_id, name, content, now()))
-        return {"id": document_id, "name": name, "characters": len(content)}
+            self.conn.execute(
+                "INSERT INTO documents(id,project_id,name,content,created_at,status,error,content_hash,parser_version,source_type,page_count,bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (document_id, project_id, name, "", now(), status, None, content_hash, None, source_type, None, bytes),
+            )
+        return self.document(document_id)
+
+    def update_document(self, document_id, **fields):
+        allowed = {"status", "error", "content", "page_count", "source_type", "parser_version", "content_hash", "bytes"}
+        if not fields or not fields.keys() <= allowed:
+            raise ValueError("invalid_document_field")
+        with self.lock, self.conn:
+            assignments = ",".join(f"{key}=?" for key in fields)
+            self.conn.execute(f"UPDATE documents SET {assignments} WHERE id=?", (*fields.values(), document_id))
+        return self.document(document_id)
+
+    def add_document(self, project_id, name, content):
+        from .config import Settings
+        from .documents import ingest_text
+        return ingest_text(self, Settings(_env_file=None), project_id, name, content)
+
+    def replace_chunks(self, document_id, rows):
+        with self.lock, self.conn:
+            existing = [item[0] for item in self.conn.execute("SELECT id FROM document_chunks WHERE document_id=?", (document_id,)).fetchall()]
+            self.conn.execute("DELETE FROM document_chunks WHERE document_id=?", (document_id,))
+            for chunk_id in existing:
+                self.conn.execute("DELETE FROM document_chunks_fts WHERE chunk_id=?", (chunk_id,))
+            for row in rows:
+                self.conn.execute(
+                    "INSERT INTO document_chunks(id,document_id,project_id,page,paragraph,char_start,char_end,locator,text,content_hash,embedding,embedding_model,index_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (row["id"], row["document_id"], row["project_id"], row.get("page"), row.get("paragraph"), row.get("char_start"), row.get("char_end"), row["locator"], row["text"], row["content_hash"], row.get("embedding"), row["embedding_model"], row["index_version"]),
+                )
+                self.conn.execute("INSERT INTO document_chunks_fts(text,chunk_id,project_id) VALUES(?,?,?)", (row["text"], row["id"], row["project_id"]))
+
+    def chunks_for_document(self, document_id):
+        return self.query("SELECT * FROM document_chunks WHERE document_id=? ORDER BY page, paragraph, char_start", (document_id,))
+
+    def chunks_for_project(self, project_id, embedding_model, index_version):
+        return self.query(
+            """SELECT c.* FROM document_chunks c
+               JOIN documents d ON d.id=c.document_id
+               WHERE c.project_id=? AND c.embedding_model=? AND c.index_version=? AND d.status='ready'""",
+            (project_id, embedding_model, index_version),
+        )
+
+    def chunk(self, chunk_id):
+        rows = self.query("SELECT * FROM document_chunks WHERE id=?", (chunk_id,))
+        return rows[0] if rows else None
+
+    def fts_search(self, project_id, match, limit, embedding_model, index_version):
+        if not match:
+            return []
+        with self.lock:
+            rows = self.conn.execute(
+                """SELECT c.id FROM document_chunks_fts f
+                   JOIN document_chunks c ON c.id=f.chunk_id
+                   JOIN documents d ON d.id=c.document_id
+                   WHERE f.project_id=? AND c.project_id=? AND c.embedding_model=? AND c.index_version=?
+                     AND d.status='ready' AND document_chunks_fts MATCH ?
+                   LIMIT ?""",
+                (project_id, project_id, embedding_model, index_version, match, limit),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def chunks_need_reindex(self, document_id, embedding_model, index_version):
+        rows = self.query("SELECT embedding_model,index_version FROM document_chunks WHERE document_id=? LIMIT 1", (document_id,))
+        if not rows:
+            return True
+        return rows[0]["embedding_model"] != embedding_model or rows[0]["index_version"] != index_version
+
+    def documents_for_reindex(self, project_id=None):
+        if project_id:
+            return self.query("SELECT * FROM documents WHERE project_id=? ORDER BY created_at", (project_id,))
+        return self.query("SELECT * FROM documents ORDER BY created_at")
+
+    def ready_documents(self, project_id):
+        return [item for item in self.list_documents(project_id) if item.get("status") == "ready"]

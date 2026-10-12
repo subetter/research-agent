@@ -64,4 +64,10 @@ input,textarea,button,a{outline-color:#8370df}input:focus{border-color:#a99be5}
 .conflict-pos-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .conflict-positions p{font-size:12px;line-height:1.8;color:#6f6b8a;margin:8px 0 10px}
 .evidence-type{display:flex;align-items:center;gap:8px}
+.document-card{position:relative}
+.doc-status{display:inline-block;margin-top:10px;font-size:9px;padding:3px 7px;border-radius:999px;background:#eeeef3;color:#5c5878}
+.doc-status.ready{background:#e7f6ed;color:#1b6b3a}
+.doc-status.processing{background:#f8ead8;color:#8a4b00}
+.doc-status.failed{background:#f8e6e6;color:#9a4d4d}
+.document-card.failed{border-color:#ead4d4}
 @media(max-width:750px){.plan-freshness,.conflict-inline,.table-conflict,.conflict-positions{grid-template-columns:1fr}.conflict-banner{flex-wrap:wrap}}

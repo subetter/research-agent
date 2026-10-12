@@ -74,3 +74,8 @@ class ClaimBundle(BaseModel):
     claims: list[ClaimDraft] = Field(default_factory=list, max_length=100)
     summary: str = Field(default="", max_length=3000)
 
+
+class ProjectToolCall(BaseModel):
+    query: str | None = None
+    chunk_id: str | None = None
+

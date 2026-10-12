@@ -163,7 +163,7 @@ async def test_api_validation_upload_and_export(tmp_path):
             assert bad.status_code == 422
             upload = await client.post(f"/api/projects/{p['id']}/documents", files={"file": ("note.md", "背景资料".encode(), "text/markdown")})
             assert upload.status_code == 201
-            forbidden = await client.post(f"/api/projects/{p['id']}/documents", files={"file": ("note.pdf", b"pdf", "application/pdf")})
+            forbidden = await client.post(f"/api/projects/{p['id']}/documents", files={"file": ("note.exe", b"binary", "application/octet-stream")})
             assert forbidden.status_code == 415
             run = (await client.post(f"/api/projects/{p['id']}/runs", json={"question": "调查产品形态并给出对比", "subjects": ["A"], "dimensions": ["功能"]})).json()
             ready = await wait_status(app.state.store, run["id"], {"waiting_input"})

@@ -115,7 +115,7 @@ Skill 首版包括 competitor_analysis、industry_landscape、research_report。
 
 Agentic RAG 的含义是由 Agent 根据问题和证据缺口选择是否检索、检索哪里和何时继续；混合召回、融合和重排仍由确定性检索管线执行。
 
-资料处理流程：上传到对象存储 → 格式与大小检查 → 异步解析 → 按页或段落分块 → 写入全文索引与向量 → 标记 ready。研究只使用 ready 状态的资料；解析失败明确提示，不能静默忽略。
+资料处理流程：上传到对象存储 → 格式与大小检查 → 异步解析 → 按页或段落分块 → 写入全文索引与向量 → 标记 ready。研究只使用 ready 状态的资料；解析失败明确提示，不能静默忽略。首版不引入 MinIO：文件在请求内解析，正文与分块留在 SQLite；PDF 使用 PyMuPDF，文本文件按 UTF-8 段落切分。
 
 初始检索配置可从全文和向量各召回 20 条开始，按内容哈希去重，经 RRF 融合后重排选取 6–10 条。数量为调优起点，依据评测调整。所有检索在召回前使用项目和身份过滤，不能先搜全库再事后过滤。
 
@@ -134,7 +134,7 @@ Agentic RAG 的含义是由 Agent 根据问题和证据缺口选择是否检索�
 | conversations、messages | project_id、role、content、created_at | 用户交互记录 |
 | documents、document_versions | project_id、object_key、hash、status、parser_version | 用户资料版本 |
 | source_versions | project_id、URL、title、published_at、fetched_at、hash、snapshot_key | 网页或文件来源快照 |
-| chunks | source_version_id、locator、text、embedding、index_version | 检索与定位 |
+| chunks | source_version_id、locator、text、embedding、index_version | 检索与定位。首版表为 `document_chunks`，含 page/paragraph/char 偏移、`content_hash`、`embedding_model` 与 `index_version`；FTS5 虚表 `document_chunks_fts` |
 | runs | project_id、status、revision、plan_version_id、parent_run_id、budget、lease_epoch | 任务事实与并发控制 |
 | plan_versions、research_tasks | run_id、scope、dimensions、dependencies、status | 计划与子任务 |
 | evidence | task_id、source_version_id、locator、quote、hash | 可核对原文 |

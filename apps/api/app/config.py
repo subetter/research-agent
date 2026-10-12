@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     max_search_calls: int = Field(default=24, ge=1, le=60)
     max_gap_rounds: int = 1
     run_timeout_seconds: int = 600
+    embedding_provider: Literal["local", "openai_compatible"] = "local"
+    embedding_model: str = "local-hash-v1"
+    embedding_api_key: str = ""
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_dim: int = Field(default=64, ge=8, le=4096)
+    index_version: str = "v1"
+    fts_recall: int = Field(default=20, ge=1, le=50)
+    vector_recall: int = Field(default=20, ge=1, le=50)
+    rerank_top_k: int = Field(default=8, ge=6, le=10)
+    mcp_enabled: bool = False
 
     @property
     def data_path(self) -> Path:

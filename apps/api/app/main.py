@@ -10,13 +10,16 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
-from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand
+from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ProjectToolCall
 from .engine import Engine
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
 from .freshness import annotate_evidence
 from .conflicts import detect_conflicts
+from .documents import ALLOWED_SUFFIXES, MAX_UPLOAD_BYTES, ingest_bytes
+from .embeddings import get_embedder, get_reranker
+from .project_mcp import ProjectToolServer
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
 
@@ -105,10 +108,13 @@ def create_app(config: Settings | None = None):
 
     @app.get("/api/health")
     def health():
+        embedder = get_embedder(config)
+        reranker = get_reranker(config)
         return {"status": "ok", "mode": config.research_mode, "live_ready": config.live_ready,
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
-                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph"}
+                "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
+                "retrieval": {"embedder": embedder.name, "reranker": reranker.name, "index_version": config.index_version, "mcp_enabled": config.mcp_enabled}}
 
     @app.get("/api/projects")
     def projects(request: Request):
@@ -214,25 +220,50 @@ def create_app(config: Settings | None = None):
         get_run(run_id)
         return store().query("SELECT * FROM events WHERE run_id=? ORDER BY seq", (run_id,))
 
+    def public_document(row):
+        return {key: row.get(key) for key in ("id", "name", "characters", "created_at", "status", "error", "page_count", "source_type", "parser_version")}
+
     @app.get("/api/projects/{project_id}/documents")
     def documents(project_id: str):
         get_project(project_id)
-        return store().query("SELECT id,name,LENGTH(content) AS characters,created_at FROM documents WHERE project_id=? ORDER BY created_at DESC", (project_id,))
+        return [public_document(item) for item in store().list_documents(project_id)]
 
     @app.post("/api/projects/{project_id}/documents", status_code=201)
     async def upload(project_id: str, file: UploadFile = File(...)):
         get_project(project_id)
         name = Path(file.filename or "document.txt").name
-        if Path(name).suffix.lower() not in {".txt", ".md", ".csv"}:
-            raise HTTPException(415, "首版支持 UTF-8 TXT、Markdown 和 CSV；PDF 解析将在下一阶段加入")
-        raw = await file.read(1_000_001)
-        if len(raw) > 1_000_000:
-            raise HTTPException(413, "文件最大 1 MB")
+        suffix = Path(name).suffix.lower()
+        if suffix not in ALLOWED_SUFFIXES:
+            raise HTTPException(415, "支持 UTF-8 TXT、Markdown、CSV 与 PDF")
+        raw = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"文件最大 {MAX_UPLOAD_BYTES // 1_000_000} MB")
+        document = await asyncio.to_thread(ingest_bytes, store(), config, project_id, name, raw)
+        return public_document(document)
+
+    @app.get("/api/projects/{project_id}/documents/search")
+    def search_documents(project_id: str, q: str = ""):
+        get_project(project_id)
+        server = ProjectToolServer(store(), config, project_id)
+        return server.search_project(q)
+
+    @app.get("/api/projects/{project_id}/tools")
+    def project_tools(project_id: str):
+        get_project(project_id)
+        return ProjectToolServer(store(), config, project_id).list_tools()
+
+    @app.post("/api/projects/{project_id}/tools/{name}")
+    def call_project_tool(project_id: str, name: str, request: Request, body: ProjectToolCall | None = None):
+        get_project(project_id)
+        server = ProjectToolServer(store(), config, project_id, owner_id=request.state.user["id"])
         try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            raise HTTPException(422, "文件需要 UTF-8 编码")
-        return store().add_document(project_id, name, text)
+            return server.call(name, (body or ProjectToolCall()).model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/api/runs/{run_id}/export")
     def export(run_id: str, format: str = "markdown"):
