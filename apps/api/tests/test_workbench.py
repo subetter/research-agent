@@ -172,8 +172,18 @@ async def test_api_validation_upload_and_export(tmp_path):
             started = await client.post(f"/api/runs/{run['id']}/commands", json={"action": "start", "expected_revision": ready["revision"]})
             assert started.status_code == 202
             await wait_status(app.state.store, run["id"], {"completed"})
+            detail = (await client.get(f"/api/runs/{run['id']}")).json()
+            assert detail["progress"]["current"] == "report"
+            assert detail["markdown"] and "# " in detail["markdown"]
+            listed = (await client.get(f"/api/runs/{run['id']}/records")).json()
+            assert any(item["kind"] == "llm" for item in listed) and any(item["kind"] == "tool" for item in listed)
+            assert all("payload" not in item for item in listed)
+            full = (await client.get(f"/api/runs/{run['id']}/records/{listed[0]['id']}")).json()
+            assert "payload" in full
             csv = await client.get(f"/api/runs/{run['id']}/export?format=csv")
             assert csv.status_code == 200 and "模拟" in csv.text
+            markdown = await client.get(f"/api/runs/{run['id']}/export?format=markdown")
+            assert markdown.status_code == 200 and "# " in markdown.text
             trace = await client.get(f"/api/runs/{run['id']}/trace")
             last_seq = trace.json()[-1]["seq"]
             sse = await client.get(f"/api/runs/{run['id']}/events?after={last_seq-1}")

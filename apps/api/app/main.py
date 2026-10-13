@@ -19,6 +19,9 @@ from .freshness import annotate_evidence
 from .conflicts import detect_conflicts
 from .documents import ALLOWED_SUFFIXES, MAX_UPLOAD_BYTES, ingest_bytes, reindex_project
 from .embeddings import ProviderHTTPError, retrieval_status
+from .progress import map_progress
+from .records import public_record
+from .report_markdown import partial_markdown, render_report_markdown
 from .project_mcp import ProjectToolServer
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
@@ -100,10 +103,20 @@ def create_app(config: Settings | None = None):
             raise HTTPException(404, "任务不存在")
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
         run["claim_evidence"] = store().claim_evidence(run_id)
+        evidence = annotate_evidence(store().evidence(run_id), run.get("plan"))
         artifact = run.get("artifact") or {}
         if artifact and "conflicts" not in artifact:
-            artifact["conflicts"] = detect_conflicts(run.get("plan") or {}, store().evidence(run_id))
+            artifact["conflicts"] = detect_conflicts(run.get("plan") or {}, evidence)
             run["artifact"] = artifact
+        events = store().query("SELECT * FROM events WHERE run_id=? ORDER BY seq", (run_id,))
+        run["progress"] = map_progress(events, run)
+        run["records"] = [public_record(item) for item in store().execution_records(run_id)]
+        if artifact:
+            run["markdown"] = artifact.get("markdown") or render_report_markdown(run, evidence)
+        elif evidence or run["status"] in {"failed", "cancelled", "partial"}:
+            run["markdown"] = partial_markdown(run, evidence)
+        else:
+            run["markdown"] = None
         return run
 
     @app.get("/api/health")
@@ -148,7 +161,7 @@ def create_app(config: Settings | None = None):
                 raise HTTPException(400, "父任务必须为同一项目中已交付的研究")
         run = store().create_run(project_id, body.question, config.research_mode, {"request": body.model_dump()}, body.parent_run_id)
         app.state.engine.schedule(run["id"], {"run_id": run["id"], "request": body.model_dump()})
-        return run
+        return get_run(run["id"])
 
     @app.get("/api/runs/{run_id}")
     def run(run_id: str):
@@ -218,6 +231,23 @@ def create_app(config: Settings | None = None):
         get_run(run_id)
         return store().query("SELECT * FROM events WHERE run_id=? ORDER BY seq", (run_id,))
 
+    @app.get("/api/runs/{run_id}/progress")
+    def run_progress(run_id: str):
+        return get_run(run_id)["progress"]
+
+    @app.get("/api/runs/{run_id}/records")
+    def run_records(run_id: str):
+        get_run(run_id)
+        return [public_record(item) for item in store().execution_records(run_id)]
+
+    @app.get("/api/runs/{run_id}/records/{record_id}")
+    def run_record(run_id: str, record_id: str):
+        get_run(run_id)
+        row = store().execution_record(record_id)
+        if not row or row["run_id"] != run_id:
+            raise HTTPException(404, "执行记录不存在")
+        return public_record(row, include_payload=True)
+
     def public_document(row):
         return {key: row.get(key) for key in ("id", "name", "characters", "created_at", "status", "error", "page_count", "source_type", "parser_version")}
 
@@ -274,10 +304,11 @@ def create_app(config: Settings | None = None):
     @app.get("/api/runs/{run_id}/export")
     def export(run_id: str, format: str = "markdown"):
         run = get_run(run_id)
-        artifact = run["artifact"]
-        if not artifact:
-            raise HTTPException(409, "尚未生成成果")
+        artifact = run.get("artifact")
+        evidence = annotate_evidence(store().evidence(run_id), run.get("plan"))
         if format == "csv":
+            if not artifact:
+                raise HTTPException(409, "尚未生成成果")
             output = io.StringIO()
             writer = csv.writer(output)
             writer.writerow(["模式", "对象", "维度", "结论", "类型", "支持证据", "冲突证据"])
@@ -288,21 +319,9 @@ def create_app(config: Settings | None = None):
             content = "\ufeff" + output.getvalue()
             suffix, mime = "csv", "text/csv"
         elif format == "markdown":
-            lines = [f"# {artifact['title']}", "", f"> 模式：{run['mode']}。{artifact['verification_note']}", "", artifact["summary"], ""]
-            for claim in artifact["claims"]:
-                lines.extend([f"## {claim['subject']} · {claim['dimension']}", "", claim["text"], "", "支持证据：" + ", ".join(claim.get("evidence_ids") or []), "", "冲突证据：" + ", ".join(claim.get("conflict_evidence_ids") or []), ""])
-            if artifact.get("conflicts"):
-                lines.extend(["## 来源冲突", ""])
-                for conflict in artifact["conflicts"]:
-                    lines.append(f"### {conflict['subject']} · {conflict['dimension']}")
-                    for position in conflict.get("positions") or []:
-                        lines.extend(["", f"- {position.get('label')}（{position.get('freshness') or 'unknown'}）：{position.get('text')}", "  证据：" + ", ".join(position.get("evidence_ids") or [])])
-                    lines.append("")
-            lines.append("## 原文证据")
-            for ev in annotate_evidence(store().evidence(run_id), run.get("plan")):
-                published = ev.get("published_at") or "未标注"
-                lines.extend(["", f"### {ev['id']}", "", f"{ev['title']} · {ev['url']} · {ev['locator']}", "", f"发布：{published} · 获取：{ev.get('fetched_at')} · 时效：{ev.get('freshness_label') or ev.get('freshness')}", "", ev["quote"], ""])
-            content = "\n".join(lines)
+            if not artifact and not evidence:
+                raise HTTPException(409, "尚未生成成果")
+            content = (artifact or {}).get("markdown") or (render_report_markdown(run, evidence) if artifact else partial_markdown(run, evidence))
             suffix, mime = "md", "text/markdown"
         else:
             raise HTTPException(400, "仅支持 markdown 或 csv")

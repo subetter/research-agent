@@ -48,6 +48,41 @@ def redact_text(text: str, settings=None) -> str:
     return _BEARER_RE.sub(r"\1[REDACTED]", out)
 
 
+SENSITIVE_JSON_KEYS = {
+    "api_key",
+    "authorization",
+    "password",
+    "secret",
+    "token",
+    "access_token",
+    "llm_api_key",
+    "tavily_api_key",
+    "siliconflow_api_key",
+    "embedding_api_key",
+    "langfuse_secret_key",
+}
+
+
 def langfuse_mask_keys() -> dict[str, str]:
     """Field names a Langfuse client should treat as secrets."""
     return {name: "[REDACTED]" for name in (*SENSITIVE_ENV_NAMES, *SENSITIVE_SETTING_FIELDS)}
+
+
+def redact_payload(value, settings=None):
+    """Walk JSON-like data, strip secret keys and secret strings. Never raise."""
+    try:
+        if isinstance(value, dict):
+            out = {}
+            for key, item in value.items():
+                if str(key).lower() in SENSITIVE_JSON_KEYS:
+                    out[key] = "[REDACTED]"
+                else:
+                    out[key] = redact_payload(item, settings)
+            return out
+        if isinstance(value, list):
+            return [redact_payload(item, settings) for item in value]
+        if isinstance(value, str):
+            return redact_text(value, settings)
+        return value
+    except Exception:
+        return "[REDACTED]"

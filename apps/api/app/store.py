@@ -89,6 +89,7 @@ class Store:
               PRIMARY KEY (run_id, claim_id, evidence_id, relation)
             )""")
             self._migrate_documents()
+            self._migrate_execution_records()
 
     def close(self):
         self.conn.close()
@@ -376,3 +377,123 @@ class Store:
 
     def ready_documents(self, project_id):
         return [item for item in self.list_documents(project_id) if item.get("status") == "ready"]
+
+    def _migrate_execution_records(self):
+        self.conn.execute("""
+        CREATE TABLE IF NOT EXISTS execution_records (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          operation_key TEXT,
+          kind TEXT NOT NULL,
+          stage TEXT,
+          subject TEXT,
+          name TEXT,
+          role TEXT,
+          status TEXT,
+          started_at TEXT,
+          finished_at TEXT,
+          latency_ms INTEGER,
+          tokens_in INTEGER DEFAULT 0,
+          tokens_out INTEGER DEFAULT 0,
+          tokens_total INTEGER DEFAULT 0,
+          preview TEXT,
+          payload TEXT,
+          truncated INTEGER DEFAULT 0,
+          seq INTEGER
+        )""")
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS execution_record_key_idx ON execution_records(run_id, operation_key)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS execution_record_run_idx ON execution_records(run_id, seq)")
+
+    def _present_record(self, row):
+        if row is None:
+            return None
+        item = dict(row)
+        for key in ("preview", "payload"):
+            if item.get(key):
+                try:
+                    item[key] = json.loads(item[key])
+                except (TypeError, json.JSONDecodeError):
+                    pass
+        item["truncated"] = bool(item.get("truncated"))
+        return item
+
+    def execution_record(self, record_id):
+        with self.lock:
+            row = self.conn.execute("SELECT * FROM execution_records WHERE id=?", (record_id,)).fetchone()
+        return self._present_record(row)
+
+    def execution_record_by_key(self, run_id, operation_key):
+        with self.lock:
+            row = self.conn.execute("SELECT * FROM execution_records WHERE run_id=? AND operation_key=?", (run_id, operation_key)).fetchone()
+        return self._present_record(row)
+
+    def execution_records(self, run_id):
+        with self.lock:
+            rows = self.conn.execute("SELECT * FROM execution_records WHERE run_id=? ORDER BY seq, started_at", (run_id,)).fetchall()
+        return [self._present_record(row) for row in rows]
+
+    def upsert_execution_record(self, row):
+        record_id = row["id"]
+        with self.lock, self.conn:
+            existing = self.conn.execute("SELECT * FROM execution_records WHERE id=?", (record_id,)).fetchone()
+            if existing is None:
+                seq = self.conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM execution_records WHERE run_id=?", (row["run_id"],)).fetchone()[0]
+                self.conn.execute(
+                    """INSERT INTO execution_records(id,run_id,operation_key,kind,stage,subject,name,role,status,started_at,finished_at,latency_ms,tokens_in,tokens_out,tokens_total,preview,payload,truncated,seq)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        record_id,
+                        row["run_id"],
+                        row.get("operation_key"),
+                        row.get("kind") or "llm",
+                        row.get("stage"),
+                        row.get("subject"),
+                        row.get("name"),
+                        row.get("role"),
+                        row.get("status") or "running",
+                        row.get("started_at") or now(),
+                        row.get("finished_at"),
+                        row.get("latency_ms"),
+                        row.get("tokens_in") or 0,
+                        row.get("tokens_out") or 0,
+                        row.get("tokens_total") or 0,
+                        json.dumps(row.get("preview") or {}, ensure_ascii=False),
+                        json.dumps(row.get("payload") or {}, ensure_ascii=False),
+                        1 if row.get("truncated") else 0,
+                        seq,
+                    ),
+                )
+                return self.execution_record(record_id)
+            merged = dict(existing)
+            for key, value in row.items():
+                if key == "id":
+                    continue
+                if key in {"preview", "payload"} and not isinstance(value, str):
+                    merged[key] = json.dumps(value if value is not None else {}, ensure_ascii=False)
+                elif key == "truncated":
+                    merged[key] = 1 if value else 0
+                elif value is not None or key in row:
+                    merged[key] = value
+            self.conn.execute(
+                """UPDATE execution_records SET operation_key=?,kind=?,stage=?,subject=?,name=?,role=?,status=?,started_at=?,finished_at=?,latency_ms=?,tokens_in=?,tokens_out=?,tokens_total=?,preview=?,payload=?,truncated=? WHERE id=?""",
+                (
+                    merged.get("operation_key"),
+                    merged.get("kind"),
+                    merged.get("stage"),
+                    merged.get("subject"),
+                    merged.get("name"),
+                    merged.get("role"),
+                    merged.get("status"),
+                    merged.get("started_at"),
+                    merged.get("finished_at"),
+                    merged.get("latency_ms"),
+                    merged.get("tokens_in") or 0,
+                    merged.get("tokens_out") or 0,
+                    merged.get("tokens_total") or 0,
+                    merged.get("preview") if isinstance(merged.get("preview"), str) else json.dumps(merged.get("preview") or {}, ensure_ascii=False),
+                    merged.get("payload") if isinstance(merged.get("payload"), str) else json.dumps(merged.get("payload") or {}, ensure_ascii=False),
+                    merged.get("truncated") or 0,
+                    record_id,
+                ),
+            )
+        return self.execution_record(record_id)

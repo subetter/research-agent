@@ -6,6 +6,7 @@ from langgraph.types import Command, interrupt
 from .conflicts import assess_gaps, detect_conflicts
 from .freshness import annotate_evidence, can_reuse_evidence
 from .providers import Provider
+from .report_markdown import render_report_markdown
 from .store import uid
 
 log = logging.getLogger(__name__)
@@ -88,10 +89,12 @@ class Engine:
     async def plan(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
+        self.store.event(run["id"], "stage.started", {"stage": "plan", "node": "plan"})
         self.store.event(run["id"], "plan.started", {})
         plan = await self.provider.plan(run, state["request"])
         self.store.update(run["id"], plan=plan)
         self.store.event(run["id"], "plan.proposed", {"subjects": plan["subjects"], "dimensions": plan["dimensions"]})
+        self.store.event(run["id"], "stage.finished", {"stage": "plan", "node": "plan"})
         return {"plan": plan, "round": 0}
 
     async def approve(self, state):
@@ -102,6 +105,8 @@ class Engine:
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
         plan = state["plan"]
+        stage = "supplement" if state.get("round", 0) else "research"
+        self.store.event(run["id"], "stage.started", {"stage": stage, "node": "research", "round": state.get("round", 0)})
         semaphore = asyncio.Semaphore(max(1, self.settings.max_researchers))
         parent = self.store.run(run["parent_run_id"]) if run["parent_run_id"] else None
 
@@ -134,10 +139,12 @@ class Engine:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        self.store.event(run["id"], "stage.finished", {"stage": stage, "node": "research", "round": state.get("round", 0)})
         return {"results": state.get("results", []) + results, "gaps": []}
 
     async def gap_check(self, state):
         await self.gate(state["run_id"])
+        self.store.event(state["run_id"], "stage.started", {"stage": "gap_check", "node": "gap_check", "round": state.get("round", 0)})
         evidence = self.store.evidence(state["run_id"])
         assessment = assess_gaps(state["plan"], evidence)
         gaps = assessment["gaps"]
@@ -153,8 +160,10 @@ class Engine:
             "conflicts": [{"subject": item["subject"], "dimension": item["dimension"]} for item in assessment["conflicts"]],
             "freshness_gaps": assessment["freshness_gaps"],
             "will_retry": more,
+            "round": current_round,
         }
         self.store.event(state["run_id"], "coverage.checked", payload)
+        self.store.event(state["run_id"], "stage.finished", {"stage": "gap_check", "node": "gap_check", "will_retry": more, "round": current_round})
         return {"gaps": gaps if more else [], "round": current_round + 1, "gap_assessment": {**assessment, "will_retry": more}}
 
     def route(self, state):
@@ -163,13 +172,16 @@ class Engine:
     async def synthesize(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
+        self.store.event(run["id"], "stage.started", {"stage": "synthesize", "node": "synthesize"})
         self.store.event(run["id"], "report.started", {})
         bundle = await self.provider.synthesize(run, state["plan"], self.store.evidence(run["id"]), lambda: self.gate(run["id"]))
+        self.store.event(run["id"], "stage.finished", {"stage": "synthesize", "node": "synthesize"})
         return {"bundle": bundle}
 
     async def render(self, state):
         run = self.store.run(state["run_id"])
         await self.gate(run["id"])
+        self.store.event(run["id"], "stage.started", {"stage": "render", "node": "render"})
         evidence = self.store.evidence(run["id"])
         claims = validate_claims(state["plan"], state["bundle"], evidence)
         annotated = annotate_evidence(evidence, state["plan"])
@@ -213,6 +225,9 @@ class Engine:
                 "fresh_evidence": assessment.get("fresh_evidence", 0),
             },
         }
+        artifact["markdown"] = render_report_markdown({**run, "artifact": artifact, "plan": state["plan"]}, annotated)
+        self.store.event(run["id"], "claims.validated", {"unknown": unknown, "claims": len(claims)})
+        self.store.event(run["id"], "stage.finished", {"stage": "render", "node": "render"})
         self.store.update(run["id"], artifact=artifact, status="partial" if unknown else "completed", error=None)
         return {}
 
@@ -230,6 +245,7 @@ class Engine:
                     output = await self.graph.ainvoke(input, {"configurable": {"thread_id": run_id}, "recursion_limit": 30})
                 if output.get("__interrupt__"):
                     await self.gate(run_id)
+                    self.store.event(run_id, "stage.started", {"stage": "approve", "node": "approve"})
                     self.store.update(run_id, status="waiting_input")
         except RunPaused:
             self.store.update(run_id, status="paused")

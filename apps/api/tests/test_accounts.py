@@ -95,7 +95,7 @@ async def test_research_resource_isolation(clients):
     assert (await user.get('/api/projects')).json() == []
     for suffix in ['', '/runs', '/documents']:
         assert (await user.get(f"/api/projects/{p['id']}{suffix}")).status_code == 404
-    for suffix in ['', '/events', '/trace', '/evidence', '/export?format=csv']:
+    for suffix in ['', '/events', '/trace', '/evidence', '/progress', '/records', '/export?format=csv']:
         assert (await user.get(f"/api/runs/{run['id']}{suffix}")).status_code == 404
     assert (await user.post(f"/api/runs/{run['id']}/commands",json={'action':'cancel','expected_revision':0})).status_code == 404
     assert (await user.post(f"/api/projects/{p['id']}/documents",files={'file':('a.txt',b'private')})).status_code == 404
