@@ -50,7 +50,7 @@ Playwright 浏览器自动化脚本已编写，但本机沙箱禁止 Chromium �
 
 ## PDF 与混合检索（后续增量）
 
-上传支持 TXT / Markdown / CSV / PDF。解析按页或段落分块，写入 FTS5 与本地哈希向量；状态为 `processing` / `ready` / `failed`，失败会保留错误信息，不会静默丢文件。检索先按 `project_id` 与当前 `embedding_model`/`index_version` 过滤，再各召回约 20 条，按内容哈希去重，RRF 融合后词法重排到 6–10 条。换模型会重建向量，不混用空间。`search_project` 与项目工具面 `read_evidence` 返回带 `page:` 定位的原文；证据侧栏展示页码。演示模式无密钥时使用 `local-hash-v1`。
+上传支持 TXT / Markdown / CSV / PDF。解析按页或段落分块，写入 FTS5 与向量；状态为 `processing` / `ready` / `failed`，失败会保留错误信息，不会静默丢文件。检索先按 `project_id` 与当前 `embedding_model`/`index_version`/`embedding_dim` 过滤，再各召回约 20 条，按内容哈希去重，RRF 融合后重排到 6–10 条。换模型或维度会重建向量，不混用空间。可通过 `POST /api/projects/{id}/documents/reindex`、资料库「重建索引」或 `python -m app.reindex` 强制重建。`search_project` 与项目工具面 `read_evidence` 返回带 `page:` 定位的原文。`EMBEDDING_PROVIDER=siliconflow` 且配置 `SILICONFLOW_API_KEY` 时走硅基流动 `/embeddings` 与 `/rerank`；无密钥回退 `local-hash-v1` 与词法重排。重排失败降级为词法，不中断研究。
 
 项目完整操作说明位于桌面项目根目录 `README.md`。Git 初始化受到当前环境对 `.git` 的写入限制，本次未创建 Git 仓库。
 

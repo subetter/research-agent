@@ -134,7 +134,7 @@ Agentic RAG 的含义是由 Agent 根据问题和证据缺口选择是否检索�
 | conversations、messages | project_id、role、content、created_at | 用户交互记录 |
 | documents、document_versions | project_id、object_key、hash、status、parser_version | 用户资料版本 |
 | source_versions | project_id、URL、title、published_at、fetched_at、hash、snapshot_key | 网页或文件来源快照 |
-| chunks | source_version_id、locator、text、embedding、index_version | 检索与定位。首版表为 `document_chunks`，含 page/paragraph/char 偏移、`content_hash`、`embedding_model` 与 `index_version`；FTS5 虚表 `document_chunks_fts` |
+| chunks | source_version_id、locator、text、embedding、index_version | 检索与定位。首版表为 `document_chunks`，含 page/paragraph/char 偏移、`content_hash`、`embedding_model`、`index_version` 与 `embedding_dim`；FTS5 虚表 `document_chunks_fts` |
 | runs | project_id、status、revision、plan_version_id、parent_run_id、budget、lease_epoch | 任务事实与并发控制 |
 | plan_versions、research_tasks | run_id、scope、dimensions、dependencies、status | 计划与子任务 |
 | evidence | task_id、source_version_id、locator、quote、hash | 可核对原文 |

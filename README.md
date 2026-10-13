@@ -40,7 +40,7 @@ bash scripts/dev.sh
 - 来源冲突：同一对象×维度下互斥口径会写入 `claim_evidence.relation=conflict`，报告与对比表并列双方，不静默合并。
 - 证据时效：`published_at` 与 `fetched_at` 分开保存；发布日期未知时留空。缺口检查可按计划把过时或未标注日期当作缺口并补充检索。
 - UTF-8 TXT、Markdown、CSV 与 PDF 上传；解析后按页/段分块，状态为处理中 / 已就绪 / 失败。
-- 项目资料混合检索：SQLite FTS5 + 本地哈希向量，内容哈希去重、RRF 融合、词法重排；换嵌入模型会重建索引，不混用向量空间。
+- 项目资料混合检索：SQLite FTS5 + 向量，内容哈希去重、RRF 融合、重排；索引记录 `embedding_model` / `index_version` / `embedding_dim`，换供应商或维度会重建，不混用向量空间。无密钥时回退 `local-hash-v1` 与词法重排。
 - Markdown 报告与 CSV 导出。
 - 模型兼容接口与 Tavily 联网适配器，模型工具调用包含搜索、正文读取与项目检索。
 
@@ -77,7 +77,23 @@ TAVILY_API_KEY=你的Tavily密钥
 3. 发起研究并让范围覆盖资料中的对象或维度。演示模式会把已就绪资料作为带页码的证据一并引用。
 4. 打开证据侧栏，确认「页码」与 `page:N;paragraph:M` 定位。失败的解析会留在资料库并给出原因，不会进入检索。
 
-默认嵌入为 `local-hash-v1`，无需密钥。若配置 `EMBEDDING_PROVIDER=openai_compatible` 与 `EMBEDDING_API_KEY`，换模型后下一次检索会重建该项目向量。
+默认嵌入为 `local-hash-v1`，无需密钥。要使用硅基流动（SiliconFlow）的 `BAAI/bge-m3` 嵌入与 `BAAI/bge-reranker-v2-m3` 重排，在 `.env` 填写：
+
+```dotenv
+EMBEDDING_PROVIDER=siliconflow
+SILICONFLOW_API_KEY=你的硅基流动密钥
+EMBEDDING_MODEL=BAAI/bge-m3
+RERANK_PROVIDER=auto
+RERANK_MODEL=BAAI/bge-reranker-v2-m3
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+```
+
+缺少密钥时自动回退本地哈希与词法重排，演示和测试不依赖外网。换模型或维度后，下一次检索会重建该项目向量；也可在「项目资料」点「重建索引」，或执行：
+
+```bash
+cd apps/api
+python -m app.reindex --project <项目ID> --force
+```
 
 ## 测试
 
@@ -102,7 +118,7 @@ PLAYWRIGHT_BROWSERS_PATH=../../.cache/browsers npx playwright test
 
 ## 工程边界
 
-首版无 Docker 前置要求，采用单进程本地调度。只读研究工具有结果缓存，证据写入幂等；暂未实现多 Worker 租约 fencing、事务 Outbox、生产鉴权与任务消息队列。运行图可以在节点边界恢复；外部请求无法保证只计费一次。项目资料检索留在 SQLite（FTS5 + 本地向量），不是 PostgreSQL/pgvector。网页来源仍无完整快照体系。
+首版无 Docker 前置要求，采用单进程本地调度。只读研究工具有结果缓存，证据写入幂等；暂未实现多 Worker 租约 fencing、事务 Outbox、生产鉴权与任务消息队列。运行图可以在节点边界恢复；外部请求无法保证只计费一次。项目资料检索留在 SQLite（FTS5 + 向量），不是 PostgreSQL/pgvector。嵌入可切换硅基流动，缺密钥时回退本地哈希。网页来源仍无完整快照体系。
 
 缺口检查覆盖对象级原文、启发式来源冲突，以及计划勾选「关注证据时效」时的过时/未标注日期。冲突检测依据价格数字与极性对立，不是完整语义仲裁。Live 研究节点包含模型工具循环，但联网供应商调用需要用户配置密钥后做实际验证。并行调用和本地读写边界已纳入测试。
 

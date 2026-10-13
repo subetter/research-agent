@@ -41,13 +41,21 @@ def search_project_documents(store, settings, project_id: str, query: str, limit
     top_k = limit or int(getattr(settings, "rerank_top_k", 8) or 8)
     top_k = max(6, min(10, top_k)) if limit is None else max(1, min(20, top_k))
 
+    known_dim = embedder.dim or store.known_embedding_dim(project_id, embedder.name, settings.index_version)
+    if known_dim and not embedder.dim:
+        embedder.dim = known_dim
     match = fts_match_query(query)
-    lexical_ids = store.fts_search(project_id, match, fts_limit, embedder.name, settings.index_version) if match else []
-    project_chunks = store.chunks_for_project(project_id, embedder.name, settings.index_version)
+    lexical_ids = store.fts_search(project_id, match, fts_limit, embedder.name, settings.index_version, known_dim) if match else []
+    project_chunks = store.chunks_for_project(project_id, embedder.name, settings.index_version, known_dim)
     query_vec = embedder.embed([query])[0]
+    query_dim = len(query_vec) if query_vec else known_dim
     scored = []
     for chunk in project_chunks:
-        scored.append((cosine(query_vec, unpack_vector(chunk.get("embedding"))), chunk["id"]))
+        vector = unpack_vector(chunk.get("embedding"))
+        stored_dim = chunk.get("embedding_dim") or len(vector)
+        if query_dim and stored_dim and stored_dim != query_dim:
+            continue
+        scored.append((cosine(query_vec, vector), chunk["id"]))
     scored.sort(reverse=True)
     vector_ids = [chunk_id for score, chunk_id in scored[:vector_limit] if score > 0]
 

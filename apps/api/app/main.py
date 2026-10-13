@@ -10,15 +10,15 @@ from fastapi.responses import StreamingResponse, Response, JSONResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
-from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ProjectToolCall
+from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ProjectToolCall, ReindexRequest
 from .engine import Engine
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
 from .freshness import annotate_evidence
 from .conflicts import detect_conflicts
-from .documents import ALLOWED_SUFFIXES, MAX_UPLOAD_BYTES, ingest_bytes
-from .embeddings import get_embedder, get_reranker
+from .documents import ALLOWED_SUFFIXES, MAX_UPLOAD_BYTES, ingest_bytes, reindex_project
+from .embeddings import ProviderHTTPError, retrieval_status
 from .project_mcp import ProjectToolServer
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
@@ -108,13 +108,11 @@ def create_app(config: Settings | None = None):
 
     @app.get("/api/health")
     def health():
-        embedder = get_embedder(config)
-        reranker = get_reranker(config)
         return {"status": "ok", "mode": config.research_mode, "live_ready": config.live_ready,
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
                 "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
-                "retrieval": {"embedder": embedder.name, "reranker": reranker.name, "index_version": config.index_version, "mcp_enabled": config.mcp_enabled}}
+                "retrieval": retrieval_status(config)}
 
     @app.get("/api/projects")
     def projects(request: Request):
@@ -240,6 +238,14 @@ def create_app(config: Settings | None = None):
             raise HTTPException(413, f"文件最大 {MAX_UPLOAD_BYTES // 1_000_000} MB")
         document = await asyncio.to_thread(ingest_bytes, store(), config, project_id, name, raw)
         return public_document(document)
+
+    @app.post("/api/projects/{project_id}/documents/reindex")
+    def reindex_documents(project_id: str, body: ReindexRequest | None = None):
+        get_project(project_id)
+        try:
+            return reindex_project(store(), config, project_id, force=bool(body and body.force))
+        except ProviderHTTPError:
+            raise HTTPException(502, "嵌入服务暂时不可用，索引未更新。") from None
 
     @app.get("/api/projects/{project_id}/documents/search")
     def search_documents(project_id: str, q: str = ""):

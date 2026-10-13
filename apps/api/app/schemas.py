@@ -79,3 +79,7 @@ class ProjectToolCall(BaseModel):
     query: str | None = None
     chunk_id: str | None = None
 
+
+class ReindexRequest(BaseModel):
+    force: bool = False
+

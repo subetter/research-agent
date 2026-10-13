@@ -26,11 +26,19 @@ class Settings(BaseSettings):
     max_search_calls: int = Field(default=24, ge=1, le=60)
     max_gap_rounds: int = 1
     run_timeout_seconds: int = 600
-    embedding_provider: Literal["local", "openai_compatible"] = "local"
+    embedding_provider: Literal["local", "siliconflow", "openai_compatible"] = "local"
     embedding_model: str = "local-hash-v1"
     embedding_api_key: str = ""
     embedding_base_url: str = "https://api.openai.com/v1"
     embedding_dim: int = Field(default=64, ge=8, le=4096)
+    siliconflow_api_key: str = ""
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    rerank_provider: Literal["auto", "local", "siliconflow"] = "auto"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    embedding_timeout_seconds: int = Field(default=45, ge=5, le=180)
+    rerank_timeout_seconds: int = Field(default=45, ge=5, le=180)
+    embedding_batch_size: int = Field(default=32, ge=1, le=32)
+    embedding_max_retries: int = Field(default=3, ge=0, le=8)
     index_version: str = "v1"
     fts_recall: int = Field(default=20, ge=1, le=50)
     vector_recall: int = Field(default=20, ge=1, le=50)

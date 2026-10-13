@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ArrowUp, BookOpen, ChevronRight, Compass, Download, FileText, FlaskConical, Layers, Loader2, Pause, Play, Plus, Search, ShieldCheck, Square, Upload, X, Activity, Check, Settings2, Scale, Clock } from "lucide-react";
+import { ArrowUpRight, ArrowUp, BookOpen, ChevronRight, Compass, Download, FileText, FlaskConical, Layers, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Square, Upload, X, Activity, Check, Settings2, Scale, Clock } from "lucide-react";
 
 import { api } from "./api";
 
@@ -15,6 +15,8 @@ type ArtifactMetrics = {claims: number; evidence: number; unknown: number; with_
 type Run = {budget?: {model_limit: number; report_reserved: number; search_limit: number}; id: string; question: string; status: string; revision: number; mode: string; plan: Plan; error: string | null; artifact: {title: string; summary: string; claims: Claim[]; conflicts?: Conflict[]; verification_note: string; metrics: ArtifactMetrics} | null; claim_evidence?: {claim_id: string; evidence_id: string; relation: string}[]; usage?: {kind: string; calls: number; tokens: number}[]};
 type Event = {seq: number; type: string; payload: Record<string, unknown>; created_at: string};
 type Doc = {id: string; name: string; characters: number; status?: string; error?: string | null; page_count?: number | null; source_type?: string};
+type RetrievalHealth = {provider?: string; embedder?: string; reranker?: string; embedding_dim?: number | null; fallback?: boolean; index_version?: string};
+type Health = {mode: string; live_ready: boolean; retrieval?: RetrievalHealth};
 
 function pageFromLocator(locator?: string) {
   const match = (locator || "").match(/page:(\d+)/);
@@ -36,7 +38,8 @@ export default function Workbench() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [runId, setRunId] = useState("");
   const [run, setRun] = useState<Run | null>(null);
-  const [health, setHealth] = useState<{mode: string; live_ready: boolean} | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [indexNote, setIndexNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [question, setQuestion] = useState("");
@@ -71,7 +74,7 @@ export default function Workbench() {
   }, []);
 
   useEffect(() => {
-    Promise.all([loadProjects(), api<{mode: string; live_ready: boolean}>("/health")]).then(([items, h]) => {
+    Promise.all([loadProjects(), api<Health>("/health")]).then(([items, h]) => {
       setHealth(h); if (items.length) setProjectId(items[0].id);
     }).catch(e => setError(e.message));
   }, [loadProjects]);
@@ -189,6 +192,18 @@ export default function Workbench() {
     if (fileInput.current) fileInput.current.value = "";
   }
 
+  async function reindexLibrary() {
+    const id = projectId;
+    await action(async () => {
+      const result = await api<{reindexed: number; embedder: string; embedding_dim?: number | null}>(`/projects/${id}/documents/reindex`, {method: "POST", body: JSON.stringify({force: true})});
+      const items = await api<Doc[]>(`/projects/${id}/documents`);
+      if (selectedProjectRef.current === id) {
+        setDocs(items);
+        setIndexNote(`已按 ${result.embedder}${result.embedding_dim ? ` · ${result.embedding_dim} 维` : ""} 重建 ${result.reindexed} 份资料。`);
+      }
+    });
+  }
+
   const running = run && ["running", "planning", "pause_requested", "cancel_requested"].includes(run.status);
   const taskDone = new Set(events.filter(e => e.type === "task.finished" || e.type === "task.reused").map(e => String(e.payload.subject))).size;
 
@@ -210,7 +225,7 @@ export default function Workbench() {
       <header className="topbar"><div className="breadcrumb">工作空间 <ChevronRight size={13}/><strong>{selectedProject?.name || "研究工作台"}</strong></div><div className={`mode-badge ${health?.mode === "live" ? "live" : ""}`}><span/>{health ? health.mode === "live" ? "联网模式" : "演示模式" : "连接服务中"}</div></header>
       {error && <div className="error-banner" role="alert">{error}<button aria-label="关闭错误" onClick={() => setError("")}><X size={15}/></button></div>}
       <section className="main-content">
-        {showDocs ? <><div className="section-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>项目资料</h1><p>上传报告或论文后，研究会用全文 + 向量混合检索引用具体页码。</p></div><button className="primary small" disabled={busy || !projectId} onClick={() => fileInput.current?.click()}><Upload size={15}/> 上传资料</button></div><div className="library-grid">{docs.map(d => <div className={`document-card ${d.status || "ready"}`} key={d.id}><FileText size={25}/><h3>{d.name}</h3><p>{d.status === "processing" ? "正在解析并建立索引…" : d.status === "failed" ? (d.error || "解析失败，未加入检索") : `${(d.characters || 0).toLocaleString()} 字符${d.page_count ? ` · ${d.page_count} 页` : ""} · 已就绪`}</p><span className={`doc-status ${d.status || "ready"}`}>{d.status === "processing" ? "处理中" : d.status === "failed" ? "失败" : "已就绪"}</span></div>)}{!docs.length && <div className="empty-library"><BookOpen size={30}/><h3>为研究补充背景</h3><p>支持 UTF-8 TXT、Markdown、CSV 与 PDF，单个文件最大 5 MB。解析失败会明确标出，不会静默丢掉。</p><button className="secondary" onClick={() => fileInput.current?.click()}>选择文件</button></div>}</div><p className="footnote">仅检索状态为「已就绪」的资料。混合检索使用 SQLite FTS5 与本地向量，换嵌入模型会重建索引。</p></> : <>
+        {showDocs ? <><div className="section-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>项目资料</h1><p>上传报告或论文后，研究会用全文 + 向量混合检索引用具体页码。</p>{health?.retrieval && <p className="retrieval-meta">检索：{health.retrieval.embedder}{health.retrieval.embedding_dim ? ` · ${health.retrieval.embedding_dim} 维` : ""} · 重排 {health.retrieval.reranker}{health.retrieval.fallback ? " · 未配置密钥，已回退本地哈希" : ""}</p>}{indexNote && <p className="index-note">{indexNote}</p>}</div><div className="library-actions"><button className="secondary small" disabled={busy || !projectId || !docs.some(d => (d.status || "ready") === "ready")} onClick={reindexLibrary}><RefreshCw size={15}/> 重建索引</button><button className="primary small" disabled={busy || !projectId} onClick={() => fileInput.current?.click()}><Upload size={15}/> 上传资料</button></div></div><div className="library-grid">{docs.map(d => <div className={`document-card ${d.status || "ready"}`} key={d.id}><FileText size={25}/><h3>{d.name}</h3><p>{d.status === "processing" ? "正在解析并建立索引…" : d.status === "failed" ? (d.error || "解析失败，未加入检索") : `${(d.characters || 0).toLocaleString()} 字符${d.page_count ? ` · ${d.page_count} 页` : ""} · 已就绪`}</p><span className={`doc-status ${d.status || "ready"}`}>{d.status === "processing" ? "处理中" : d.status === "failed" ? "失败" : "已就绪"}</span></div>)}{!docs.length && <div className="empty-library"><BookOpen size={30}/><h3>为研究补充背景</h3><p>支持 UTF-8 TXT、Markdown、CSV 与 PDF，单个文件最大 5 MB。解析失败会明确标出，不会静默丢掉。</p><button className="secondary" onClick={() => fileInput.current?.click()}>选择文件</button></div>}</div><p className="footnote">仅检索状态为「已就绪」的资料。换嵌入模型或维度会重建索引，不会混用向量空间。无 SiliconFlow 密钥时回退 local-hash-v1 与词法重排。</p></> : <>
           {!run ? <div className="welcome"><div className="eyebrow"><span/> YOUR NEXT DISCOVERY</div><h1>让好问题，<br/><span>成为有依据的洞察。</span></h1><p className="welcome-copy">规划、探索、验证，再交付。<br/>一个沉淀资料与证据的研究空间。</p><div className="welcome-features"><span><Search size={15}/> 多源探索</span><span><ShieldCheck size={15}/> 证据溯源</span><span><Scale size={15}/> 冲突对照</span><span><Clock size={15}/> 证据时效</span></div><div className="sample-grid">{[{title: "理解产品格局", q: "调研 ChatGPT、Gemini 和 Claude 的深度研究产品形态，比较研究流程与交付方式。", icon: <Compass size={20}/>}, {title: "核对冲突与时效", q: "比较 ChatGPT 与 Gemini 的定价口径，标出互相冲突的来源，并检查证据是否过时。", subjects: "ChatGPT, Gemini", dimensions: "定价", icon: <Scale size={20}/>}, {title: "整理研究证据", q: "结合项目资料，梳理当前行业观点、支持证据与尚待验证的问题。", icon: <BookOpen size={20}/>}].map(s => <button key={s.title} className="sample-card" onClick={() => {setQuestion(s.q); if ("subjects" in s && s.subjects) setSubjects(s.subjects); if ("dimensions" in s && s.dimensions) {setDimensions(s.dimensions); setShowScope(true);}}}>{s.icon}<strong>{s.title}</strong><p>{s.q}</p><ArrowUpRight size={16}/></button>)}</div></div> : <div className="research-detail">
             <div className="section-heading"><div><p className="eyebrow">RESEARCH SESSION</p><h1>{run.question}</h1><div className="session-meta"><span className={`status ${run.status}`}>{running && <Loader2 size={12} className="spin"/>}{statusText[run.status]}</span><span>{run.mode === "demo" ? "模拟研究 · 不包含真实事实" : "联网研究"}</span><span>{run.id.slice(-8)}</span></div></div><div className="run-actions">{["running", "planning"].includes(run.status) && <button className="icon-button" aria-label="暂停研究" disabled={busy} onClick={() => command("pause")}><Pause size={16}/></button>}{run.status === "paused" && <button className="secondary" disabled={busy} onClick={() => command("resume")}><Play size={14}/> 恢复研究</button>}{run.status === "failed" && <button className="secondary" disabled={busy} onClick={() => command("retry")}>重试</button>}{!terminal.has(run.status) && <button className="icon-button" aria-label="取消研究" disabled={busy} onClick={() => command("cancel")}><Square size={14}/></button>}</div></div>
             {run.error && <div className="inline-warning" role="alert"><strong>本次研究未完成</strong><p>{run.error}</p><small>已保留 {evidence.length} 条证据。重试会从失败步骤继续，复用已完成的调用。</small></div>}

@@ -140,25 +140,27 @@ def index_document(store, settings, document_id: str, chunks: list[dict]):
             "embedding": pack_vector(vector),
             "embedding_model": embedder.name,
             "index_version": index_version,
+            "embedding_dim": len(vector),
         })
     store.replace_chunks(document_id, rows)
 
 
-def reindex_project(store, settings, project_id: str | None = None) -> int:
-    """Rebuild vectors when embedding_model or index_version changes. Never mix spaces."""
+def reindex_project(store, settings, project_id: str | None = None, force: bool = False) -> dict:
+    """Rebuild vectors when embedding_model, index_version or dims change. Never mix spaces."""
     embedder = get_embedder(settings)
     documents = store.documents_for_reindex(project_id)
     changed = 0
     for document in documents:
         if document.get("status") != "ready":
             continue
-        stale = store.chunks_need_reindex(document["id"], embedder.name, settings.index_version)
+        expected_dim = embedder.dim or None
+        stale = store.chunks_need_reindex(document["id"], embedder.name, settings.index_version, expected_dim)
         existing = store.chunks_for_document(document["id"])
         if not existing and document.get("content"):
             index_document(store, settings, document["id"], chunk_text(document["content"], page=1))
             changed += 1
             continue
-        if not stale:
+        if not force and not stale:
             continue
         rebuilt = [{
             "page": item.get("page") or 1,
@@ -171,4 +173,10 @@ def reindex_project(store, settings, project_id: str | None = None) -> int:
         } for item in existing]
         index_document(store, settings, document["id"], rebuilt)
         changed += 1
-    return changed
+    return {
+        "reindexed": changed,
+        "embedder": embedder.name,
+        "embedding_dim": embedder.dim or None,
+        "index_version": settings.index_version,
+        "forced": bool(force),
+    }

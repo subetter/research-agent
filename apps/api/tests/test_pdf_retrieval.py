@@ -86,6 +86,7 @@ def test_reindex_on_embedding_model_change(tmp_path):
     ingest_bytes(store, settings(), project["id"], "note.md", "混合检索需要记录 embedding_model。".encode())
     first = store.chunks_for_document(store.list_documents(project["id"])[0]["id"])
     assert first and first[0]["embedding_model"] == LocalHashEmbedder.name
+    assert first[0]["embedding_dim"] == 64
     store.conn.execute("UPDATE document_chunks SET embedding_model=?, index_version=?", ("old-model", "v0"))
     store.conn.commit()
     hits = search_project_documents(store, settings(), project["id"], "embedding_model")

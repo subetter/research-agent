@@ -248,9 +248,17 @@ class Store:
           embedding BLOB,
           embedding_model TEXT NOT NULL,
           index_version TEXT NOT NULL,
+          embedding_dim INTEGER,
           UNIQUE(document_id, locator)
         )""")
+        chunk_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(document_chunks)")}
+        if "embedding_dim" not in chunk_columns:
+            self.conn.execute("ALTER TABLE document_chunks ADD COLUMN embedding_dim INTEGER")
+            for chunk_id, blob in self.conn.execute("SELECT id, embedding FROM document_chunks").fetchall():
+                dim = (len(blob) // 4) if blob else None
+                self.conn.execute("UPDATE document_chunks SET embedding_dim=? WHERE id=?", (dim, chunk_id))
         self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_project_model_idx ON document_chunks(project_id, embedding_model, index_version)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_project_space_idx ON document_chunks(project_id, embedding_model, index_version, embedding_dim)")
         self.conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(text, chunk_id UNINDEXED, project_id UNINDEXED, tokenize='unicode61')")
 
     def document(self, document_id):
@@ -299,46 +307,67 @@ class Store:
                 self.conn.execute("DELETE FROM document_chunks_fts WHERE chunk_id=?", (chunk_id,))
             for row in rows:
                 self.conn.execute(
-                    "INSERT INTO document_chunks(id,document_id,project_id,page,paragraph,char_start,char_end,locator,text,content_hash,embedding,embedding_model,index_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (row["id"], row["document_id"], row["project_id"], row.get("page"), row.get("paragraph"), row.get("char_start"), row.get("char_end"), row["locator"], row["text"], row["content_hash"], row.get("embedding"), row["embedding_model"], row["index_version"]),
+                    "INSERT INTO document_chunks(id,document_id,project_id,page,paragraph,char_start,char_end,locator,text,content_hash,embedding,embedding_model,index_version,embedding_dim) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (row["id"], row["document_id"], row["project_id"], row.get("page"), row.get("paragraph"), row.get("char_start"), row.get("char_end"), row["locator"], row["text"], row["content_hash"], row.get("embedding"), row["embedding_model"], row["index_version"], row.get("embedding_dim")),
                 )
                 self.conn.execute("INSERT INTO document_chunks_fts(text,chunk_id,project_id) VALUES(?,?,?)", (row["text"], row["id"], row["project_id"]))
 
     def chunks_for_document(self, document_id):
         return self.query("SELECT * FROM document_chunks WHERE document_id=? ORDER BY page, paragraph, char_start", (document_id,))
 
-    def chunks_for_project(self, project_id, embedding_model, index_version):
-        return self.query(
-            """SELECT c.* FROM document_chunks c
+    def chunks_for_project(self, project_id, embedding_model, index_version, embedding_dim=None):
+        sql = """SELECT c.* FROM document_chunks c
                JOIN documents d ON d.id=c.document_id
-               WHERE c.project_id=? AND c.embedding_model=? AND c.index_version=? AND d.status='ready'""",
-            (project_id, embedding_model, index_version),
-        )
+               WHERE c.project_id=? AND c.embedding_model=? AND c.index_version=? AND d.status='ready'"""
+        args = [project_id, embedding_model, index_version]
+        if embedding_dim:
+            sql += " AND c.embedding_dim=?"
+            args.append(embedding_dim)
+        return self.query(sql, args)
 
     def chunk(self, chunk_id):
         rows = self.query("SELECT * FROM document_chunks WHERE id=?", (chunk_id,))
         return rows[0] if rows else None
 
-    def fts_search(self, project_id, match, limit, embedding_model, index_version):
+    def fts_search(self, project_id, match, limit, embedding_model, index_version, embedding_dim=None):
         if not match:
             return []
-        with self.lock:
-            rows = self.conn.execute(
-                """SELECT c.id FROM document_chunks_fts f
+        sql = """SELECT c.id FROM document_chunks_fts f
                    JOIN document_chunks c ON c.id=f.chunk_id
                    JOIN documents d ON d.id=c.document_id
                    WHERE f.project_id=? AND c.project_id=? AND c.embedding_model=? AND c.index_version=?
-                     AND d.status='ready' AND document_chunks_fts MATCH ?
-                   LIMIT ?""",
-                (project_id, project_id, embedding_model, index_version, match, limit),
-            ).fetchall()
+                     AND d.status='ready' AND document_chunks_fts MATCH ?"""
+        args = [project_id, project_id, embedding_model, index_version, match]
+        if embedding_dim:
+            sql += " AND c.embedding_dim=?"
+            args.append(embedding_dim)
+        sql += " LIMIT ?"
+        args.append(limit)
+        with self.lock:
+            rows = self.conn.execute(sql, args).fetchall()
         return [row[0] for row in rows]
 
-    def chunks_need_reindex(self, document_id, embedding_model, index_version):
-        rows = self.query("SELECT embedding_model,index_version FROM document_chunks WHERE document_id=? LIMIT 1", (document_id,))
+    def chunks_need_reindex(self, document_id, embedding_model, index_version, embedding_dim=None):
+        rows = self.query("SELECT embedding_model,index_version,embedding_dim FROM document_chunks WHERE document_id=? LIMIT 1", (document_id,))
         if not rows:
             return True
-        return rows[0]["embedding_model"] != embedding_model or rows[0]["index_version"] != index_version
+        row = rows[0]
+        if row["embedding_model"] != embedding_model or row["index_version"] != index_version:
+            return True
+        stored_dim = row.get("embedding_dim")
+        if embedding_dim:
+            if not stored_dim or int(stored_dim) != int(embedding_dim):
+                return True
+        return False
+
+    def known_embedding_dim(self, project_id, embedding_model, index_version):
+        rows = self.query(
+            """SELECT embedding_dim FROM document_chunks
+               WHERE project_id=? AND embedding_model=? AND index_version=? AND embedding_dim IS NOT NULL
+               LIMIT 1""",
+            (project_id, embedding_model, index_version),
+        )
+        return int(rows[0]["embedding_dim"]) if rows and rows[0]["embedding_dim"] else None
 
     def documents_for_reindex(self, project_id=None):
         if project_id:
