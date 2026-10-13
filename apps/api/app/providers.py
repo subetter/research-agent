@@ -207,6 +207,8 @@ class Provider:
         if run["mode"] == "demo":
             evidence_ids = []
             digest = hashlib.sha256(subject.encode()).hexdigest()[:8]
+            await asyncio.sleep(1.6)
+            await gate()
             as_of = plan.get("as_of") or date.today().isoformat()
             for index, dimension in enumerate(plan["dimensions"]):
                 await asyncio.sleep(0.35)
