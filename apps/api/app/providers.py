@@ -542,16 +542,21 @@ class Provider:
             elif round_index == 0 and is_conflict_dimension(dimension):
                 official = {"title": f"{subject} · {dimension} · 官方口径", "url": f"https://example.com/demo/{digest}/official", "quote": f"【模拟资料】{subject} 官方公布{dimension}为每月 20 美元。", "locator": "paragraph:official", "source_type": "demo", "dimension": dimension, "dimensions": [dimension], "published_at": "2020-03-01"}
                 review = {"title": f"{subject} · {dimension} · 第三方评测", "url": f"https://example.com/demo/{digest}/review", "quote": f"【模拟资料】第三方评测称 {subject} 的{dimension}为每月 42 美元，与官方口径不一致。", "locator": "paragraph:review", "source_type": "demo", "dimension": dimension, "dimensions": [dimension], "published_at": as_of}
-                evidence_ids.append(self.store.add_evidence(run["project_id"], run["id"], key, official))
+                first = self.store.add_evidence(run["project_id"], run["id"], key, official)
+                evidence_ids.append(first)
                 evidence_ids.append(self.store.add_evidence(run["project_id"], run["id"], key, review))
+                self.note_coverage_fill(run, plan, subject, first)
             elif round_index == 0:
                 text = f"【模拟资料】{subject} 的「{dimension}」条目用于演示来源、证据和结论的关联。这不是该产品的真实信息。"
                 item = {"title": f"{subject} · {dimension} · 模拟来源", "url": f"https://example.com/demo/{digest}", "quote": text, "locator": f"paragraph:{index + 1}", "source_type": "demo", "dimension": dimension, "dimensions": [dimension], "published_at": None}
                 evidence_id = self.store.add_evidence(run["project_id"], run["id"], key, item)
                 evidence_ids.append(evidence_id)
+                self.note_coverage_fill(run, plan, subject, evidence_id)
             else:
                 follow = {"title": f"{subject} · {dimension} · 补充检索", "url": f"https://example.com/demo/{digest}/followup", "quote": f"【模拟资料】补充检索：{subject} 的「{dimension}」仍存在多种口径，已按原文并列保留，不合并为单一数字。", "locator": f"paragraph:followup-{index + 1}", "source_type": "demo", "dimension": dimension, "dimensions": [dimension], "published_at": as_of}
-                evidence_ids.append(self.store.add_evidence(run["project_id"], run["id"], key, follow))
+                evidence_id = self.store.add_evidence(run["project_id"], run["id"], key, follow)
+                evidence_ids.append(evidence_id)
+                self.note_coverage_fill(run, plan, subject, evidence_id)
         followups = []
         if general:
             followups = await self.collect_followups(run, plan, subject, evidence_ids, gate, f"research-reflect:{subject}:{round_index}", gap_brief)

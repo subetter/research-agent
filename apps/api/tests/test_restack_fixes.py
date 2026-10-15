@@ -20,7 +20,7 @@ async def test_failed_llm_unknown_status_can_retry_same_key(tmp_path, monkeypatc
     store = Store(tmp_path / "retry.sqlite")
     project = store.create_project("重试", "")
     run = store.create_run(project["id"], "网络失败后重试同一操作", "live", {})
-    provider = Provider(Settings(_env_file=None, max_model_calls=3, report_reserved_calls=1), store)
+    provider = Provider(Settings(_env_file=None, max_model_calls=5, report_reserved_calls=1), store)
     attempts = {"n": 0}
 
     async def flaky(*args, **kwargs):
@@ -97,7 +97,7 @@ async def test_live_research_prompt_includes_gap_brief(tmp_path):
     captured = []
 
     async def fake_chat(run_id, messages, key, tools=None):
-        captured.append(messages)
+        captured.append([dict(item) for item in messages])
         return {"role": "assistant", "content": "调查完成"}
 
     async def gate():
@@ -113,7 +113,8 @@ async def test_live_research_prompt_includes_gap_brief(tmp_path):
     }
     await provider.live_research(run, {"subjects": ["A"], "dimensions": ["定价"], "max_search_calls": 2}, "A", 1, gate, ["定价"], brief)
     assert captured
-    system, user = captured[0]
+    system = next(item for item in captured[0] if item.get("role") == "system")
+    user = next(item for item in captured[0] if item.get("role") == "user")
     payload = json.loads(user["content"])
     assert payload["gap"]["reasons"] == ["conflict", "freshness"]
     assert payload["gap"]["dimensions"] == ["定价"]

@@ -20,9 +20,9 @@ async def test_user_edit_creates_version_and_pending_verification(runtime):
     calls = []
     original = engine.provider.research
 
-    async def spy(run, plan, subject, round_index, gate, dimensions=None):
+    async def spy(run, plan, subject, round_index, gate, dimensions=None, gap_brief=None):
         calls.append(subject)
-        return await original(run, plan, subject, round_index, gate, dimensions)
+        return await original(run, plan, subject, round_index, gate, dimensions, gap_brief)
 
     engine.provider.research = spy
     run = await complete_run(engine, store)

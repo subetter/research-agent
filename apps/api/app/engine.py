@@ -169,7 +169,7 @@ def research_targets(plan, gaps):
                     continue
                 wanted.add(gap.get("subquestion_id") or gap.get("subject"))
             questions = [item for item in questions if item["id"] in wanted]
-        briefs = {item.get("subject"): item for item in gaps if isinstance(item, dict)}
+        briefs = {item.get("subject"): item for item in (gaps or []) if isinstance(item, dict)}
         return [(item["id"], [item["question"]], briefs.get(item["id"]) or {"subject": item["id"], "dimensions": [item["question"]], "reasons": ["uncovered"]}) for item in questions]
     if not gaps:
         return [(subject, list(plan["dimensions"]), {"subject": subject, "dimensions": list(plan["dimensions"]), "reasons": []}) for subject in plan["subjects"]]

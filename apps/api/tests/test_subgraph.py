@@ -30,9 +30,9 @@ async def test_resume_after_crash_skips_finished_subject(tmp_path):
         engine = Engine(settings, store, saver)
         original = engine.provider.research
 
-        async def spy(run, plan, subject, round_index, gate, dimensions=None):
+        async def spy(run, plan, subject, round_index, gate, dimensions=None, gap_brief=None):
             calls.append((subject, round_index))
-            return await original(run, plan, subject, round_index, gate, dimensions)
+            return await original(run, plan, subject, round_index, gate, dimensions, gap_brief)
 
         engine.provider.research = spy
         run = await new_run(engine, store)
@@ -46,9 +46,9 @@ async def test_resume_after_crash_skips_finished_subject(tmp_path):
         restarted = Engine(settings, store, saver)
         original = restarted.provider.research
 
-        async def spy_again(run, plan, subject, round_index, gate, dimensions=None):
+        async def spy_again(run, plan, subject, round_index, gate, dimensions=None, gap_brief=None):
             calls.append((subject, round_index))
-            return await original(run, plan, subject, round_index, gate, dimensions)
+            return await original(run, plan, subject, round_index, gate, dimensions, gap_brief)
 
         restarted.provider.research = spy_again
         store.update(run["id"], status="running")
