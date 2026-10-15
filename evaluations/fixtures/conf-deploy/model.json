@@ -1,0 +1,57 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"核实 Beacon 的部署方式，冲突不要合并\", \"subjects\": [\"Beacon\"], \"dimensions\": [\"部署方式\"], \"questions\": [\"收集Beacon的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:Beacon:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Beacon-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Beacon 部署方式 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Beacon-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/beacon-deploy\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:2": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Beacon-r1",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/beacon-blog\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:3": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  }
+}

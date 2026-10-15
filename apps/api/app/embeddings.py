@@ -34,9 +34,16 @@ def tokenize(text: str) -> list[str]:
                 tokens.append(piece)
             else:
                 tokens.extend(piece[i : i + 2] for i in range(len(piece) - 1))
+                if len(piece) >= 3:
+                    tokens.extend(piece[i : i + 3] for i in range(len(piece) - 2))
         else:
             tokens.append(piece)
     return tokens
+
+
+def fts_index_text(text: str) -> str:
+    """Space-separated tokens so unicode61 FTS can match Chinese n-grams and English words."""
+    return " ".join(tokenize(text))
 
 
 class Embedder(Protocol):

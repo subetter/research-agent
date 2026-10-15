@@ -1,0 +1,117 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"比较 Atlas、Beacon 与 Quark 的产品形态\", \"subjects\": [\"Atlas\", \"Beacon\", \"Quark\"], \"dimensions\": [\"产品形态\"], \"questions\": [\"收集Atlas的直接来源\", \"收集Beacon的直接来源\", \"收集Quark的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:Atlas:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Atlas-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Atlas 产品形态 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Atlas:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Atlas-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/atlas-form\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Atlas:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Beacon-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Beacon 产品形态 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Beacon-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/beacon-form\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Beacon:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Quark:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Quark-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Quark 产品形态 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Quark:0:1": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Quark:1:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Quark-s1",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Quark 补充 缺失维度\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Quark:1:1": {
+    "role": "assistant",
+    "content": "未找到更多原文",
+    "_tokens": 8
+  }
+}

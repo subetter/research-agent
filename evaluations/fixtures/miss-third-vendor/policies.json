@@ -1,0 +1,75 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Atlas 是面向分析师的研究工作台。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Beacon 是实时监控面板。"
+      },
+      {
+        "subject": "Quark",
+        "dimension": "产品形态",
+        "kind": "unknown",
+        "text": "未找到 Quark 的原文来源。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "产品形态",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Atlas",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Atlas 是研究工作台。"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Beacon 是监控面板。"
+      },
+      {
+        "subject": "Quark",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Quark 与 Atlas 形态相同。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Atlas",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Beacon",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Quark",
+        "dimension": "产品形态",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

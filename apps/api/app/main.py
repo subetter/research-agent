@@ -5,13 +5,16 @@ import json
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response, JSONResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from .config import settings, Settings
 from .store import Store
-from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ProjectToolCall, ReindexRequest
-from .engine import Engine
+from .schemas import ProjectCreate, RunCreate, PlanUpdate, RunCommand, ClarifyUpdate, DocumentUpdate, ArtifactEdit, ProjectToolCall, ReindexRequest
+from .engine import Engine, coverage_for_plan
+from .export import markdown_report, website_html, website_zip
+from .synthesis import attach_synthesis_counts, latest_synthesis_context
+from .tracing import get_tracing, init_tracing
 from .accounts import account_router, session_user, COOKIE
 from .conversations import conversation_router
 from .admin import admin_router
@@ -38,8 +41,8 @@ def create_app(config: Settings | None = None):
             store.conn.execute("UPDATE chat_messages SET status='failed',content=CASE WHEN content='' THEN '服务重启中断了生成；消息已保存，请重新提问。' ELSE content || char(10) || '服务重启中断了生成，以上内容已保存。' END WHERE status='pending'")
         async with AsyncSqliteSaver.from_conn_string(str(config.data_path / "checkpoints.sqlite")) as saver:
             app.state.store = store
+            app.state.tracing = init_tracing(config)
             app.state.engine = Engine(config, store, saver)
-            # A local single-process server never silently restarts billable calls.
             for run in store.query("SELECT * FROM runs WHERE status IN ('running','planning','pause_requested','cancel_requested')"):
                 store.update(run["id"], status="cancelled" if run["status"] == "cancel_requested" else "paused")
             try:
@@ -52,7 +55,6 @@ def create_app(config: Settings | None = None):
 
     @app.middleware("http")
     async def local_only(request: Request, call_next):
-        # Bind to loopback and reject foreign browser origins, including DNS-rebinding hosts.
         if request.headers.get("host", "").split(":")[0] not in {"localhost", "127.0.0.1", "testserver"}:
             return Response("Local access only", status_code=403)
         origin = request.headers.get("origin")
@@ -69,7 +71,6 @@ def create_app(config: Settings | None = None):
                 if user["role"] != "admin":
                     return JSONResponse({"detail": "仅管理员可访问"}, status_code=403)
             else:
-                # Owner checks also cover evidence, traces, uploads, commands and exports.
                 match = re.match(r"^/api/(projects|runs|conversations)/([^/]+)(?:/|$)", path)
                 if match:
                     resource, resource_id = match.groups()
@@ -103,11 +104,22 @@ def create_app(config: Settings | None = None):
             raise HTTPException(404, "任务不存在")
         run["budget"] = {"model_limit": config.max_model_calls, "report_reserved": config.report_reserved_calls, "search_limit": run["plan"].get("max_search_calls", config.max_search_calls)}
         run["claim_evidence"] = store().claim_evidence(run_id)
-        evidence = annotate_evidence(store().evidence(run_id), run.get("plan"))
+        plan = run.get("plan") or {}
+        run["waiting"] = plan.get("waiting") if run["status"] == "waiting_input" else None
+        evidence = annotate_evidence(store().evidence(run_id), plan)
         artifact = run.get("artifact") or {}
         if artifact and "conflicts" not in artifact:
-            artifact["conflicts"] = detect_conflicts(run.get("plan") or {}, evidence)
+            artifact["conflicts"] = detect_conflicts(plan, evidence)
             run["artifact"] = artifact
+        if (plan.get("mode") == "general" and plan.get("subquestions")) or (plan.get("subjects") and plan.get("dimensions")):
+            run["coverage"] = attach_synthesis_counts(coverage_for_plan(plan, store().evidence(run_id)), latest_synthesis_context(store(), run_id))
+        versions = store().list_artifact_versions(run_id)
+        if not versions and run.get("artifact"):
+            store().add_artifact_version(run_id, run["project_id"], run["artifact"], origin="system")
+            versions = store().list_artifact_versions(run_id)
+        run["artifact_versions"] = versions
+        run["artifact_version"] = versions[-1]["version"] if versions else None
+        run["trace_url"] = get_tracing().trace_url(run_id)
         events = store().query("SELECT * FROM events WHERE run_id=? ORDER BY seq", (run_id,))
         run["progress"] = map_progress(events, run)
         run["records"] = [public_record(item) for item in store().execution_records(run_id)]
@@ -125,6 +137,7 @@ def create_app(config: Settings | None = None):
                 "chat_ready": bool(config.llm_api_key and config.llm_model), "chat_mode": config.effective_chat_mode,
                 "model": config.llm_model, "provider": config.llm_provider,
                 "version": "0.3.0", "storage": "SQLite", "runtime": "LangGraph",
+                "mcp_enabled": config.mcp_enabled, "tracing_enabled": config.tracing_enabled,
                 "retrieval": retrieval_status(config)}
 
     @app.get("/api/projects")
@@ -172,13 +185,34 @@ def create_app(config: Settings | None = None):
         run = get_run(run_id)
         if run["status"] != "waiting_input":
             raise HTTPException(409, "仅可在启动前编辑计划")
+        if (run.get("plan") or {}).get("waiting") == "clarify":
+            raise HTTPException(409, "请先补充研究对象与比较维度")
         next_plan = body.plan.model_dump()
         next_plan["max_search_calls"] = min(next_plan["max_search_calls"], config.max_search_calls)
         next_plan["max_gap_rounds"] = min(next_plan["max_gap_rounds"], config.max_gap_rounds)
+        current_plan = run.get("plan") or {}
+        if not next_plan.get("skill_name"):
+            next_plan["skill_name"] = current_plan.get("skill_name") or ""
+            next_plan["skill_version"] = current_plan.get("skill_version") or ""
         try:
             return store().update(run_id, body.expected_revision, plan=next_plan)
         except ValueError:
             raise HTTPException(409, "计划已更新，请刷新后重试")
+
+    @app.put("/api/runs/{run_id}/clarify")
+    def clarify(run_id: str, body: ClarifyUpdate):
+        run = get_run(run_id)
+        if run["status"] != "waiting_input" or (run.get("plan") or {}).get("waiting") != "clarify":
+            raise HTTPException(409, "当前不是澄清阶段")
+        current = dict(run.get("plan") or {})
+        request = dict(current.get("request") or {"question": run["question"]})
+        request["subjects"] = body.subjects
+        request["dimensions"] = body.dimensions
+        current["request"] = request
+        try:
+            return store().update(run_id, body.expected_revision, plan=current)
+        except ValueError:
+            raise HTTPException(409, "状态已更新，请刷新后重试")
 
     @app.post("/api/runs/{run_id}/commands", status_code=202)
     async def command(run_id: str, body: RunCommand):
@@ -249,7 +283,7 @@ def create_app(config: Settings | None = None):
         return public_record(row, include_payload=True)
 
     def public_document(row):
-        return {key: row.get(key) for key in ("id", "name", "characters", "created_at", "status", "error", "page_count", "source_type", "parser_version")}
+        return {key: row.get(key) for key in ("id", "name", "characters", "created_at", "status", "error", "page_count", "source_type", "parser_version", "citable")}
 
     @app.get("/api/projects/{project_id}/documents")
     def documents(project_id: str):
@@ -257,7 +291,7 @@ def create_app(config: Settings | None = None):
         return [public_document(item) for item in store().list_documents(project_id)]
 
     @app.post("/api/projects/{project_id}/documents", status_code=201)
-    async def upload(project_id: str, file: UploadFile = File(...)):
+    async def upload(project_id: str, file: UploadFile = File(...), citable: bool = Form(False)):
         get_project(project_id)
         name = Path(file.filename or "document.txt").name
         suffix = Path(name).suffix.lower()
@@ -267,6 +301,17 @@ def create_app(config: Settings | None = None):
         if len(raw) > MAX_UPLOAD_BYTES:
             raise HTTPException(413, f"文件最大 {MAX_UPLOAD_BYTES // 1_000_000} MB")
         document = await asyncio.to_thread(ingest_bytes, store(), config, project_id, name, raw)
+        if citable:
+            store().set_document_citable(project_id, document["id"], True)
+            document = store().document(document["id"])
+        return public_document(document)
+
+    @app.patch("/api/projects/{project_id}/documents/{document_id}")
+    def update_document(project_id: str, document_id: str, body: DocumentUpdate):
+        get_project(project_id)
+        document = store().set_document_citable(project_id, document_id, body.citable)
+        if not document:
+            raise HTTPException(404, "资料不存在")
         return public_document(document)
 
     @app.post("/api/projects/{project_id}/documents/reindex")
@@ -278,10 +323,10 @@ def create_app(config: Settings | None = None):
             raise HTTPException(502, "嵌入服务暂时不可用，索引未更新。") from None
 
     @app.get("/api/projects/{project_id}/documents/search")
-    def search_documents(project_id: str, q: str = ""):
+    async def search_documents(project_id: str, q: str = ""):
         get_project(project_id)
         server = ProjectToolServer(store(), config, project_id)
-        return server.search_project(q)
+        return await asyncio.to_thread(server.search_project, q)
 
     @app.get("/api/projects/{project_id}/tools")
     def project_tools(project_id: str):
@@ -301,31 +346,104 @@ def create_app(config: Settings | None = None):
         except PermissionError as exc:
             raise HTTPException(404, str(exc)) from exc
 
-    @app.get("/api/runs/{run_id}/export")
-    def export(run_id: str, format: str = "markdown"):
+    @app.get("/api/runs/{run_id}/artifacts")
+    def artifacts(run_id: str):
         run = get_run(run_id)
-        artifact = run.get("artifact")
+        return run["artifact_versions"]
+
+    @app.get("/api/runs/{run_id}/artifacts/{version}")
+    def artifact_version(run_id: str, version: int):
+        get_run(run_id)
+        row = store().get_artifact_version(run_id, version)
+        if not row:
+            raise HTTPException(404, "成果版本不存在")
+        return row
+
+    @app.patch("/api/runs/{run_id}/artifact")
+    def edit_artifact(run_id: str, body: ArtifactEdit):
+        run = get_run(run_id)
+        if not run.get("artifact"):
+            raise HTTPException(409, "尚未生成成果")
+        if run["status"] not in {"completed", "partial"}:
+            raise HTTPException(409, "仅可编辑已交付的成果")
+        base = store().get_artifact_version(run_id, body.base_version)
+        if not base:
+            raise HTTPException(404, "成果版本不存在")
+        content = json.loads(json.dumps(base["content"]))
+        if body.summary is not None:
+            content["summary"] = body.summary
+        by_id = {claim["id"]: claim for claim in content.get("claims") or []}
+        for edit in body.claims:
+            claim = by_id.get(edit.id)
+            if not claim:
+                raise HTTPException(404, "结论不存在")
+            if claim.get("text") == edit.text:
+                continue
+            claim["text"] = edit.text
+            claim["verification"] = "unconfirmed"
+        claims = content.get("claims") or []
+        coverage = content.get("coverage") or {}
+        content["metrics"] = {
+            "claims": len(claims),
+            "evidence": content.get("metrics", {}).get("evidence", 0),
+            "unknown": sum(item.get("kind") == "unknown" for item in claims),
+            "with_references": sum(bool(item.get("evidence_ids")) for item in claims),
+            "supported": sum(item.get("verification") in {"fully", "partial", "reference_checked"} for item in claims),
+            "cells_covered": coverage.get("covered", 0),
+            "cells_total": coverage.get("total", 0),
+            "conflicts": content.get("metrics", {}).get("conflicts", 0),
+        }
+        store().add_artifact_version(run_id, run["project_id"], content, origin="user", parent_version_id=base["id"])
+        try:
+            store().update(run_id, body.expected_revision, artifact=content)
+        except ValueError:
+            raise HTTPException(409, "状态已更新，请刷新后重试")
+        return get_run(run_id)
+
+    @app.get("/api/runs/{run_id}/export")
+    def export(run_id: str, format: str = "markdown", version: int | None = None):
+        run = get_run(run_id)
         evidence = annotate_evidence(store().evidence(run_id), run.get("plan"))
+        if version is not None:
+            row = store().get_artifact_version(run_id, version)
+            if not row:
+                raise HTTPException(404, "成果版本不存在")
+            artifact = row["content"]
+        else:
+            artifact = run.get("artifact")
         if format == "csv":
             if not artifact:
                 raise HTTPException(409, "尚未生成成果")
             output = io.StringIO()
             writer = csv.writer(output)
-            writer.writerow(["模式", "对象", "维度", "结论", "类型", "支持证据", "冲突证据"])
+            writer.writerow(["模式", "对象", "维度", "结论", "类型", "核验", "支持证据", "冲突证据"])
             for claim in artifact["claims"]:
-                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], ";".join(claim.get("evidence_ids") or []), ";".join(claim.get("conflict_evidence_ids") or [])]
-                # Spreadsheet formula injection protection.
+                values = [run["mode"], claim["subject"], claim["dimension"], claim["text"], claim["kind"], claim.get("verification", ""), ";".join(claim.get("evidence_ids") or []), ";".join(claim.get("conflict_evidence_ids") or [])]
                 writer.writerow(["'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value for value in values])
             content = "\ufeff" + output.getvalue()
             suffix, mime = "csv", "text/csv"
         elif format == "markdown":
             if not artifact and not evidence:
                 raise HTTPException(409, "尚未生成成果")
-            content = (artifact or {}).get("markdown") or (render_report_markdown(run, evidence) if artifact else partial_markdown(run, evidence))
+            if artifact and artifact.get("sections"):
+                content = markdown_report(artifact, store().evidence(run_id), mode=run["mode"])
+            else:
+                content = (artifact or {}).get("markdown") or (render_report_markdown(run, evidence) if artifact else partial_markdown(run, evidence))
             suffix, mime = "md", "text/markdown"
+        elif format in {"html", "website"}:
+            if not artifact:
+                raise HTTPException(409, "尚未生成成果")
+            content = website_html(artifact, store().evidence(run_id), mode=run["mode"], note=artifact.get("verification_note") or "")
+            suffix, mime = "html", "text/html; charset=utf-8"
+        elif format in {"website-zip", "zip"}:
+            if not artifact:
+                raise HTTPException(409, "尚未生成成果")
+            payload = website_zip(artifact, store().evidence(run_id), mode=run["mode"], note=artifact.get("verification_note") or "")
+            return Response(payload, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{run_id}-website.zip"'})
         else:
-            raise HTTPException(400, "仅支持 markdown 或 csv")
-        return Response(content, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{run_id}.{suffix}"'})
+            raise HTTPException(400, "仅支持 markdown、csv、html、website 或 website-zip")
+        disposition = "inline" if format in {"html", "website"} else "attachment"
+        return Response(content, media_type=mime, headers={"Content-Disposition": f'{disposition}; filename="{run_id}.{suffix}"'})
 
     app.include_router(account_router(store))
     app.include_router(conversation_router(store, config))

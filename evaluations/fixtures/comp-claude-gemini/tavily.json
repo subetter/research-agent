@@ -1,0 +1,38 @@
+{
+  "Claude 研究流程 交付方式 官方": {
+    "results": [
+      {
+        "title": "Claude 研究说明",
+        "url": "https://example.com/claude",
+        "snippet": "Claude 可写长报告。",
+        "raw_content": "研究流程：Claude 先澄清问题，再检索并逐步写出带引用的草稿。\n\n交付方式：结果以对话消息和可下载 Markdown 交付。"
+      }
+    ]
+  },
+  "Gemini 研究流程 交付方式 官方": {
+    "results": [
+      {
+        "title": "Gemini Deep Research",
+        "url": "https://example.com/gemini-research",
+        "snippet": "Gemini 能做深度研究。",
+        "raw_content": "研究流程：Gemini Deep Research 先给出可编辑计划，再后台浏览网页。\n\n交付方式：完成后生成带链接的研究报告。"
+      }
+    ]
+  },
+  "Claude Gemini 研究流程 交付方式": {
+    "results": [
+      {
+        "title": "Claude 研究说明",
+        "url": "https://example.com/claude",
+        "snippet": "Claude 可写长报告。",
+        "raw_content": "研究流程：Claude 先澄清问题，再检索并逐步写出带引用的草稿。\n\n交付方式：结果以对话消息和可下载 Markdown 交付。"
+      },
+      {
+        "title": "Gemini Deep Research",
+        "url": "https://example.com/gemini-research",
+        "snippet": "Gemini 能做深度研究。",
+        "raw_content": "研究流程：Gemini Deep Research 先给出可编辑计划，再后台浏览网页。\n\n交付方式：完成后生成带链接的研究报告。"
+      }
+    ]
+  }
+}

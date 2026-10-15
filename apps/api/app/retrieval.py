@@ -29,6 +29,13 @@ def fts_match_query(query: str) -> str:
     return " OR ".join(parts[:16])
 
 
+async def asearch_project_documents(store, settings, project_id: str, query: str, limit: int | None = None) -> list[dict]:
+    """Run hybrid retrieval off the event loop so embed/rerank cannot stall SSE."""
+    import asyncio
+
+    return await asyncio.to_thread(search_project_documents, store, settings, project_id, query, limit)
+
+
 def search_project_documents(store, settings, project_id: str, query: str, limit: int | None = None) -> list[dict]:
     """Recall only ready chunks that already belong to this project."""
     if not query or not str(query).strip():

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-# Real graph: plan → approve → research → gap_check → (research) → synthesize → render.
-# There is no clarify interrupt on this branch; do not invent a waiting clarify step.
+# Real graph: clarify → plan → approve → research → gap_check → (research) → synthesize → verify → render.
 STAGES = (
+    {"id": "clarify", "label": "澄清范围", "node": "clarify"},
     {"id": "plan", "label": "规划", "node": "plan"},
     {"id": "approve", "label": "计划确认", "node": "approve"},
     {"id": "research", "label": "检索/阅读", "node": "research"},
     {"id": "gap_check", "label": "缺口与冲突检查", "node": "gap_check"},
     {"id": "supplement", "label": "补充研究", "node": "research"},
     {"id": "synthesize", "label": "综合", "node": "synthesize"},
+    {"id": "verify", "label": "原文核验", "node": "verify"},
     {"id": "render", "label": "校验", "node": "render"},
     {"id": "report", "label": "生成报告", "node": "render"},
 )
@@ -38,8 +39,11 @@ def _last(events: list[dict], *types: str) -> dict | None:
     return None
 
 
-def activity_line(events: list[dict], *, evidence_count: int = 0, status: str = "") -> str:
+def activity_line(events: list[dict], *, evidence_count: int = 0, status: str = "", run: dict | None = None) -> str:
     if status == "waiting_input":
+        waiting = ((run or {}).get("plan") or {}).get("waiting")
+        if waiting == "clarify":
+            return "还缺少研究对象或比较维度，请先补全"
         return "等待你确认研究计划"
     if status == "paused":
         return "研究已暂停，可从当前步骤继续"
@@ -77,6 +81,8 @@ def activity_line(events: list[dict], *, evidence_count: int = 0, status: str = 
             return f"发现缺口，将进行第 {int(payload.get('round') or 1) + 1} 轮补充"
         conflicts = payload.get("conflicts") or []
         return f"覆盖检查完成，冲突 {len(conflicts)} 处"
+    if kind == "verify.started" or (kind == "stage.started" and payload.get("stage") == "verify"):
+        return "正在对照原文核验引用"
     if kind == "report.started" or kind == "stage.started" and payload.get("stage") == "synthesize":
         return "正在综合证据并起草结论"
     if kind == "stage.started" and payload.get("stage") == "render":
@@ -146,12 +152,20 @@ def map_progress(events: list[dict], run: dict) -> dict:
     supplement_events = [event for event in events if event.get("type") in {"task.started", "task.reused", "tool.started"} and int(_payload(event).get("round") or 0) > 0]
     supplement_used = bool(will_retry or supplement_events or any(int(_payload(event).get("round") or 0) > 0 for event in events if event.get("type") == "coverage.checked"))
     synthesize_started = _has(events, "report.started") or any(_payload(event).get("stage") == "synthesize" for event in events if event.get("type") == "stage.started")
+    verify_started = _has(events, "verify.started", "verify.finished") or any(_payload(event).get("stage") == "verify" for event in events if event.get("type") == "stage.started")
     render_started = any(_payload(event).get("stage") == "render" for event in events if event.get("type") == "stage.started") or _has(events, "claims.validated")
     report_done = terminal_ok or _has(events, "run.completed", "run.partial")
+    clarifying = waiting and ((run.get("plan") or {}).get("waiting") == "clarify" or any(_payload(event).get("kind") == "clarify" for event in events if event.get("type") == "run.waiting_input"))
 
     def state_for(stage_id: str) -> str:
-        if cancelled and stage_id not in {"plan"} and not plan_done:
+        if cancelled and stage_id not in {"plan", "clarify"} and not plan_done:
             return "pending"
+        if stage_id == "clarify":
+            if plan_done or research_started or report_done:
+                return "skipped" if not clarifying and not any(_payload(event).get("kind") == "clarify" for event in events) else "done"
+            if clarifying:
+                return "waiting"
+            return "skipped"
         if stage_id == "plan":
             if plan_done:
                 return "done"
@@ -163,7 +177,7 @@ def map_progress(events: list[dict], run: dict) -> dict:
         if stage_id == "approve":
             if research_started or synthesize_started or report_done:
                 return "done"
-            if waiting:
+            if waiting and not clarifying:
                 return "waiting"
             if plan_done and status in {"running", "planning"}:
                 return "current"
@@ -193,11 +207,19 @@ def map_progress(events: list[dict], run: dict) -> dict:
                 return "failed" if failed else "current"
             return "pending"
         if stage_id == "synthesize":
-            if render_started or report_done:
+            if verify_started or render_started or report_done:
                 return "done"
             if synthesize_started:
                 return "failed" if failed else "current"
             return "pending"
+        if stage_id == "verify":
+            if report_done or render_started:
+                return "done"
+            if verify_started:
+                return "failed" if failed else "current"
+            if synthesize_started:
+                return "pending"
+            return "skipped" if not synthesize_started and not report_done else "pending"
         if stage_id == "render":
             if report_done:
                 return "done"
@@ -222,7 +244,9 @@ def map_progress(events: list[dict], run: dict) -> dict:
             current = item["id"]
         stages.append({**item, "state": state})
     if not current:
-        if waiting:
+        if clarifying:
+            current = "clarify"
+        elif waiting:
             current = "approve"
         elif terminal_ok:
             current = "report"
@@ -239,7 +263,7 @@ def map_progress(events: list[dict], run: dict) -> dict:
     return {
         "stages": stages,
         "current": current,
-        "activity": activity_line(events, evidence_count=evidence_count, status=status),
+        "activity": activity_line(events, evidence_count=evidence_count, status=status, run=run),
         "elapsed_seconds": elapsed_seconds(run, events),
         "waiting": waiting,
         "paused": paused,

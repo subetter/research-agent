@@ -1,0 +1,18 @@
+{
+  "id": "comp-chatgpt-gemini",
+  "family": "competitor",
+  "question": "比较 ChatGPT 与 Gemini 的产品形态和定价",
+  "subjects": [
+    "ChatGPT",
+    "Gemini"
+  ],
+  "dimensions": [
+    "产品形态",
+    "定价"
+  ],
+  "baseline_query": "ChatGPT Gemini 产品形态 定价",
+  "page_subjects": {
+    "https://example.com/chatgpt": "ChatGPT",
+    "https://example.com/gemini": "Gemini"
+  }
+}

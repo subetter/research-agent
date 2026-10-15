@@ -1,0 +1,18 @@
+{
+  "id": "miss-third-vendor",
+  "family": "missing",
+  "question": "比较 Atlas、Beacon 与 Quark 的产品形态",
+  "subjects": [
+    "Atlas",
+    "Beacon",
+    "Quark"
+  ],
+  "dimensions": [
+    "产品形态"
+  ],
+  "baseline_query": "Atlas Beacon Quark 产品形态",
+  "page_subjects": {
+    "https://example.com/atlas-form": "Atlas",
+    "https://example.com/beacon-form": "Beacon"
+  }
+}

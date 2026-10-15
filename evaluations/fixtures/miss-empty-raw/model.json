@@ -1,0 +1,77 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"调查 Helio 的产品形态和部署方式\", \"subjects\": [\"Helio\"], \"dimensions\": [\"产品形态\", \"部署方式\"], \"questions\": [\"收集Helio的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:Helio:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Helio-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Helio 产品形态 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Helio:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Helio-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/helio\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Helio:0:2": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Helio-r1",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/helio-deploy\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Helio:0:3": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Helio:1:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Helio-s1",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Helio 补充 缺失维度\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Helio:1:1": {
+    "role": "assistant",
+    "content": "未找到更多原文",
+    "_tokens": 8
+  }
+}

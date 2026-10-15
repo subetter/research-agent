@@ -1,9 +1,11 @@
+import hashlib
 import json
 import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 
 def now() -> str:
@@ -12,6 +14,52 @@ def now() -> str:
 
 def uid(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
+
+
+def canonical_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if not parsed.scheme or not parsed.hostname:
+        return (url or "").strip()
+    scheme = parsed.scheme.lower()
+    host = parsed.hostname.lower()
+    port = parsed.port
+    if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+        netloc = f"{host}:{port}"
+    else:
+        netloc = host
+    path = parsed.path or "/"
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+    return urlunparse((scheme, netloc, path, "", parsed.query, ""))
+
+
+def content_hash(text: str) -> str:
+    return hashlib.sha256(" ".join((text or "").split()).encode()).hexdigest()
+
+
+def normalize_dimensions(value) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = [value] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(item.strip() for item in value if isinstance(item, str) and item.strip()))
+
+
+def subject_from_task_key(task_key: str) -> str | None:
+    if not task_key or not task_key.startswith("research:"):
+        return None
+    body = task_key[len("research:"):]
+    return body.rsplit(":", 1)[0] if ":" in body else body
+
+
+def infer_dimensions_from_title(title: str) -> list[str]:
+    parts = [part.strip() for part in (title or "").split("·")]
+    if len(parts) >= 3 and "模拟" in parts[-1]:
+        return [parts[1]] if parts[1] else []
+    return []
 
 
 class Store:
@@ -88,7 +136,9 @@ class Store:
               relation TEXT NOT NULL CHECK(relation IN ('support','conflict')),
               PRIMARY KEY (run_id, claim_id, evidence_id, relation)
             )""")
+            self._migrate_evidence()
             self._migrate_documents()
+            self._migrate_artifacts()
             self._migrate_execution_records()
 
     def close(self):
@@ -102,6 +152,10 @@ class Store:
         for key in ("plan", "artifact", "payload", "result"):
             if key in out and out[key] is not None:
                 out[key] = json.loads(out[key])
+        if "dimensions" in out:
+            out["dimensions"] = normalize_dimensions(out["dimensions"])
+        if "citable" in out and out["citable"] is not None:
+            out["citable"] = bool(out["citable"])
         return out
 
     def query(self, sql, args=()):
@@ -179,7 +233,10 @@ class Store:
         with self.lock, self.conn:
             existing = self.conn.execute("SELECT status FROM usage WHERE run_id=? AND key=?", (run_id, key)).fetchone()
             if existing:
-                # Unknown/in-flight calls still consume budget; retries are a new operation.
+                # Failed/unknown calls may retry the same operation without opening a new ledger slot.
+                if existing[0] == "unknown":
+                    self.conn.execute("UPDATE usage SET status='reserved', tokens=0 WHERE run_id=? AND key=?", (run_id, key))
+                    return True
                 return False
             total = self.conn.execute("SELECT COUNT(*) FROM usage WHERE run_id=? AND kind=?", (run_id, kind)).fetchone()[0]
             if total >= limit:
@@ -194,16 +251,49 @@ class Store:
     def add_evidence(self, project_id, run_id, task_key, item):
         from .freshness import parse_published_at
         published_at = parse_published_at(item.get("published_at"))
+        quote = item["quote"]
+        url = item["url"]
+        locator = item["locator"]
+        dims = normalize_dimensions(item.get("dimensions"))
+        if item.get("dimension") and item["dimension"] not in dims:
+            dims = list(dict.fromkeys([*(dims or []), item["dimension"]]))
+        if not dims:
+            dims = infer_dimensions_from_title(item.get("title", ""))
+        dimension = item.get("dimension") or (dims[0] if dims else None)
+        canon = item.get("canonical_url") or canonical_url(url)
+        digest = item.get("content_hash") or content_hash(quote)
+        dims_json = json.dumps(dims, ensure_ascii=False)
+        role = item.get("citation_role") or ("analysis" if item.get("source_type") == "document" and not item.get("citable") else "fact")
         with self.lock, self.conn:
-            existing = self.conn.execute("SELECT id FROM evidence WHERE run_id=? AND task_key=? AND url=? AND locator=?", (run_id, task_key, item["url"], item["locator"])).fetchone()
+            existing = self.conn.execute(
+                """SELECT id, dimensions FROM evidence WHERE run_id=? AND (
+                     (content_hash IS NOT NULL AND content_hash=?)
+                     OR (canonical_url IS NOT NULL AND canonical_url=? AND quote=?)
+                     OR (task_key=? AND url=? AND locator=?)
+                   )""",
+                (run_id, digest, canon, quote, task_key, url, locator),
+            ).fetchone()
             if existing:
+                merged = list(dict.fromkeys(normalize_dimensions(existing["dimensions"]) + dims))
+                if merged != normalize_dimensions(existing["dimensions"]):
+                    self.conn.execute("UPDATE evidence SET dimensions=? WHERE id=?", (json.dumps(merged, ensure_ascii=False), existing["id"]))
                 return existing[0]
             evidence_id = uid("ev")
             self.conn.execute(
-                "INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,published_at,dimension) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (evidence_id, project_id, run_id, task_key, item["title"], item["url"], item["quote"], item["locator"], item["source_type"], item.get("fetched_at", now()), published_at, item.get("dimension")),
+                """INSERT INTO evidence(id,project_id,run_id,task_key,title,url,quote,locator,source_type,fetched_at,published_at,dimension,dimensions,canonical_url,content_hash,citation_role)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (evidence_id, project_id, run_id, task_key, item["title"], url, quote, locator, item["source_type"], item.get("fetched_at", now()), published_at, dimension, dims_json, canon, digest, role),
             )
-            self._event(run_id, "evidence.created", {"evidence_id": evidence_id, "title": item["title"], "published_at": published_at})
+            self._event(run_id, "evidence.created", {
+                "evidence_id": evidence_id,
+                "title": item["title"],
+                "published_at": published_at,
+                "dimensions": dims,
+                "subject": subject_from_task_key(task_key),
+                "url": url,
+                "source_type": item["source_type"],
+                "citation_role": role,
+            })
             return evidence_id
 
     def evidence(self, run_id):
@@ -220,6 +310,89 @@ class Store:
     def claim_evidence(self, run_id):
         return self.query("SELECT claim_id,evidence_id,relation FROM claim_evidence WHERE run_id=? ORDER BY rowid", (run_id,))
 
+    def _migrate_evidence(self):
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(evidence)")}
+        extras = {
+            "published_at": "TEXT",
+            "dimension": "TEXT",
+            "dimensions": "TEXT DEFAULT '[]'",
+            "canonical_url": "TEXT",
+            "content_hash": "TEXT",
+            "citation_role": "TEXT DEFAULT 'fact'",
+        }
+        for name, spec in extras.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE evidence ADD COLUMN {name} {spec}")
+        rows = self.conn.execute("SELECT id, title, url, quote, dimensions, canonical_url, content_hash FROM evidence").fetchall()
+        for row in rows:
+            updates = {}
+            dims = normalize_dimensions(row["dimensions"])
+            if not dims:
+                inferred = infer_dimensions_from_title(row["title"])
+                if inferred:
+                    updates["dimensions"] = json.dumps(inferred, ensure_ascii=False)
+            if not row["canonical_url"] and row["url"]:
+                updates["canonical_url"] = canonical_url(row["url"])
+            if not row["content_hash"] and row["quote"]:
+                updates["content_hash"] = content_hash(row["quote"])
+            if updates:
+                sql = ",".join(f"{key}=?" for key in updates)
+                self.conn.execute(f"UPDATE evidence SET {sql} WHERE id=?", (*updates.values(), row["id"]))
+
+    def _migrate_artifacts(self):
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS artifact_versions (
+              id TEXT PRIMARY KEY,
+              run_id TEXT REFERENCES runs(id),
+              project_id TEXT,
+              version INTEGER NOT NULL,
+              parent_version_id TEXT,
+              origin TEXT NOT NULL CHECK(origin IN ('system','user')),
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(run_id, version)
+            )
+            """
+        )
+
+    def list_artifact_versions(self, run_id):
+        return self.query(
+            "SELECT id,run_id,project_id,version,parent_version_id,origin,created_at FROM artifact_versions WHERE run_id=? ORDER BY version",
+            (run_id,),
+        )
+
+    def get_artifact_version(self, run_id, version):
+        rows = self.query("SELECT * FROM artifact_versions WHERE run_id=? AND version=?", (run_id, version))
+        if not rows:
+            return None
+        row = rows[0]
+        if isinstance(row.get("content"), str):
+            row["content"] = json.loads(row["content"])
+        return row
+
+    def add_artifact_version(self, run_id, project_id, content, origin="system", parent_version_id=None):
+        if origin not in {"system", "user"}:
+            raise ValueError("invalid_origin")
+        with self.lock, self.conn:
+            latest = self.conn.execute(
+                "SELECT id,version FROM artifact_versions WHERE run_id=? ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            version = (latest["version"] if latest else 0) + 1
+            parent = parent_version_id or (latest["id"] if latest else None)
+            artifact_id = uid("art")
+            self.conn.execute(
+                "INSERT INTO artifact_versions(id,run_id,project_id,version,parent_version_id,origin,content,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                (artifact_id, run_id, project_id, version, parent, origin, json.dumps(content, ensure_ascii=False), now()),
+            )
+            self._event(run_id, "artifact.created" if origin == "system" else "artifact.edited", {
+                "version": version,
+                "origin": origin,
+                "parent_version_id": parent,
+            })
+        return self.get_artifact_version(run_id, version)
+
     def _migrate_documents(self):
         columns = {row[1] for row in self.conn.execute("PRAGMA table_info(documents)")}
         extras = {
@@ -230,6 +403,7 @@ class Store:
             "source_type": "TEXT DEFAULT 'text'",
             "page_count": "INTEGER",
             "bytes": "INTEGER",
+            "citable": "INTEGER DEFAULT 0",
         }
         for name, spec in extras.items():
             if name not in columns:
@@ -261,6 +435,19 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_project_model_idx ON document_chunks(project_id, embedding_model, index_version)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS chunks_project_space_idx ON document_chunks(project_id, embedding_model, index_version, embedding_dim)")
         self.conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_chunks_fts USING fts5(text, chunk_id UNINDEXED, project_id UNINDEXED, tokenize='unicode61')")
+        self._rebuild_fts_if_needed()
+
+    def _rebuild_fts_if_needed(self):
+        self.conn.execute("CREATE TABLE IF NOT EXISTS store_meta (key TEXT PRIMARY KEY, value TEXT)")
+        row = self.conn.execute("SELECT value FROM store_meta WHERE key='fts_text_mode'").fetchone()
+        if row and row[0] == "explicit_ngrams":
+            return
+        self.conn.execute("DROP TABLE IF EXISTS document_chunks_fts")
+        self.conn.execute("CREATE VIRTUAL TABLE document_chunks_fts USING fts5(text, chunk_id UNINDEXED, project_id UNINDEXED, tokenize='unicode61')")
+        from .embeddings import fts_index_text
+        for chunk_id, project_id, text in self.conn.execute("SELECT id, project_id, text FROM document_chunks").fetchall():
+            self.conn.execute("INSERT INTO document_chunks_fts(text,chunk_id,project_id) VALUES(?,?,?)", (fts_index_text(text or ""), chunk_id, project_id))
+        self.conn.execute("INSERT OR REPLACE INTO store_meta(key,value) VALUES('fts_text_mode','explicit_ngrams')")
 
     def document(self, document_id):
         rows = self.query("SELECT * FROM documents WHERE id=?", (document_id,))
@@ -271,6 +458,7 @@ class Store:
     def _present_document(self, row):
         item = dict(row)
         item["characters"] = len(item.get("content") or "")
+        item["citable"] = bool(item.get("citable"))
         return item
 
     def list_documents(self, project_id):
@@ -295,10 +483,22 @@ class Store:
             self.conn.execute(f"UPDATE documents SET {assignments} WHERE id=?", (*fields.values(), document_id))
         return self.document(document_id)
 
-    def add_document(self, project_id, name, content):
+    def add_document(self, project_id, name, content, citable=False):
         from .config import Settings
         from .documents import ingest_text
-        return ingest_text(self, Settings(_env_file=None), project_id, name, content)
+        document = ingest_text(self, Settings(_env_file=None), project_id, name, content)
+        if citable:
+            self.set_document_citable(project_id, document["id"], True)
+            document = self.document(document["id"])
+        return document
+
+    def set_document_citable(self, project_id, document_id, citable):
+        with self.lock, self.conn:
+            current = self.conn.execute("SELECT id FROM documents WHERE project_id=? AND id=?", (project_id, document_id)).fetchone()
+            if current is None:
+                return None
+            self.conn.execute("UPDATE documents SET citable=? WHERE id=?", (1 if citable else 0, document_id))
+        return self.document(document_id)
 
     def replace_chunks(self, document_id, rows):
         with self.lock, self.conn:
@@ -311,7 +511,8 @@ class Store:
                     "INSERT INTO document_chunks(id,document_id,project_id,page,paragraph,char_start,char_end,locator,text,content_hash,embedding,embedding_model,index_version,embedding_dim) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (row["id"], row["document_id"], row["project_id"], row.get("page"), row.get("paragraph"), row.get("char_start"), row.get("char_end"), row["locator"], row["text"], row["content_hash"], row.get("embedding"), row["embedding_model"], row["index_version"], row.get("embedding_dim")),
                 )
-                self.conn.execute("INSERT INTO document_chunks_fts(text,chunk_id,project_id) VALUES(?,?,?)", (row["text"], row["id"], row["project_id"]))
+                from .embeddings import fts_index_text
+                self.conn.execute("INSERT INTO document_chunks_fts(text,chunk_id,project_id) VALUES(?,?,?)", (fts_index_text(row["text"]), row["id"], row["project_id"]))
 
     def chunks_for_document(self, document_id):
         return self.query("SELECT * FROM document_chunks WHERE document_id=? ORDER BY page, paragraph, char_start", (document_id,))
