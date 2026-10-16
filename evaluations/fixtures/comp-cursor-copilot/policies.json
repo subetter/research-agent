@@ -1,0 +1,102 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "Cursor",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Cursor 是独立的 AI 代码编辑器。"
+      },
+      {
+        "subject": "Cursor",
+        "dimension": "目标用户",
+        "kind": "fact",
+        "text": "Cursor 面向职业软件工程师。"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Copilot 以 IDE 插件形式提供。"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "目标用户",
+        "kind": "fact",
+        "text": "Copilot 面向 GitHub 开发者与企业团队。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Cursor",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "Cursor",
+        "dimension": "目标用户",
+        "verification": "fully"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "目标用户",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "Cursor",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Cursor 是 AI 编辑器。"
+      },
+      {
+        "subject": "Cursor",
+        "dimension": "目标用户",
+        "kind": "unknown",
+        "text": "摘要未写目标用户。"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "Copilot 是插件。"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "目标用户",
+        "kind": "unknown",
+        "text": "摘要未写目标用户。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "Cursor",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Cursor",
+        "dimension": "目标用户",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "Copilot",
+        "dimension": "目标用户",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

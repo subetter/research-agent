@@ -1,0 +1,16 @@
+{
+  "id": "conf-date",
+  "family": "conflict",
+  "question": "核实 NovaWriter 产品形态的发布时间",
+  "subjects": [
+    "NovaWriter"
+  ],
+  "dimensions": [
+    "产品形态"
+  ],
+  "baseline_query": "NovaWriter 产品形态 发布",
+  "page_subjects": {
+    "https://example.com/nova-2024": "NovaWriter",
+    "https://example.com/nova-2025": "NovaWriter"
+  }
+}

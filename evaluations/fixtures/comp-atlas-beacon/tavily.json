@@ -1,0 +1,38 @@
+{
+  "Atlas 部署方式 定价 官方": {
+    "results": [
+      {
+        "title": "Atlas 文档",
+        "url": "https://example.com/atlas",
+        "snippet": "Atlas 可私有化。",
+        "raw_content": "部署方式：Atlas 支持云端与私有化部署，企业可在内网安装。\n\n定价：Atlas Team 为每席每月 40 美元。"
+      }
+    ]
+  },
+  "Beacon 部署方式 定价 官方": {
+    "results": [
+      {
+        "title": "Beacon 文档",
+        "url": "https://example.com/beacon",
+        "snippet": "Beacon 只提供云端。",
+        "raw_content": "部署方式：Beacon 仅提供多租户云端，不开放私有化安装。\n\n定价：Beacon Pro 为每年 480 美元。"
+      }
+    ]
+  },
+  "Atlas Beacon 部署方式 定价": {
+    "results": [
+      {
+        "title": "Atlas 文档",
+        "url": "https://example.com/atlas",
+        "snippet": "Atlas 可私有化。",
+        "raw_content": "部署方式：Atlas 支持云端与私有化部署，企业可在内网安装。\n\n定价：Atlas Team 为每席每月 40 美元。"
+      },
+      {
+        "title": "Beacon 文档",
+        "url": "https://example.com/beacon",
+        "snippet": "Beacon 只提供云端。",
+        "raw_content": "部署方式：Beacon 仅提供多租户云端，不开放私有化安装。\n\n定价：Beacon Pro 为每年 480 美元。"
+      }
+    ]
+  }
+}

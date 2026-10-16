@@ -1,0 +1,16 @@
+{
+  "id": "conf-price",
+  "family": "conflict",
+  "question": "核实 Atlas 的定价，如有冲突请保留两个口径",
+  "subjects": [
+    "Atlas"
+  ],
+  "dimensions": [
+    "定价"
+  ],
+  "baseline_query": "Atlas 定价",
+  "page_subjects": {
+    "https://example.com/atlas-price": "Atlas",
+    "https://example.com/atlas-price-repost": "Atlas"
+  }
+}

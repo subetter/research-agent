@@ -1,0 +1,44 @@
+{
+  "Atlas 产品形态 官方": {
+    "results": [
+      {
+        "title": "Atlas 形态",
+        "url": "https://example.com/atlas-form",
+        "snippet": "Atlas 是研究工作台。",
+        "raw_content": "产品形态：Atlas 是面向分析师的研究工作台。"
+      }
+    ]
+  },
+  "Beacon 产品形态 官方": {
+    "results": [
+      {
+        "title": "Beacon 形态",
+        "url": "https://example.com/beacon-form",
+        "snippet": "Beacon 是监控面板。",
+        "raw_content": "产品形态：Beacon 是实时监控面板。"
+      }
+    ]
+  },
+  "Quark 产品形态 官方": {
+    "results": []
+  },
+  "Atlas Beacon Quark 产品形态": {
+    "results": [
+      {
+        "title": "Atlas 形态",
+        "url": "https://example.com/atlas-form",
+        "snippet": "Atlas 是研究工作台。",
+        "raw_content": "产品形态：Atlas 是面向分析师的研究工作台。"
+      },
+      {
+        "title": "Beacon 形态",
+        "url": "https://example.com/beacon-form",
+        "snippet": "Beacon 是监控面板。",
+        "raw_content": "产品形态：Beacon 是实时监控面板。"
+      }
+    ]
+  },
+  "Quark 补充 缺失维度": {
+    "results": []
+  }
+}

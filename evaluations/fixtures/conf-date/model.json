@@ -1,0 +1,57 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"核实 NovaWriter 产品形态的发布时间\", \"subjects\": [\"NovaWriter\"], \"dimensions\": [\"产品形态\"], \"questions\": [\"收集NovaWriter的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:NovaWriter:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "NovaWriter-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"NovaWriter 产品形态 发布 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:NovaWriter:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "NovaWriter-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/nova-2024\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:NovaWriter:0:2": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "NovaWriter-r1",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/nova-2025\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:NovaWriter:0:3": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  }
+}

@@ -56,7 +56,7 @@ def signals_conflict(left, right) -> bool:
         return True
     if left["free"] and right["paid"] and not left["paid"]:
         return True
-    if right["free"] and left["paid"] and not right["free"]:
+    if right["free"] and left["paid"] and not right["paid"]:
         return True
     if left["polarity"] and right["polarity"] and left["polarity"] != right["polarity"]:
         return True

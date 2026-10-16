@@ -1,0 +1,97 @@
+{
+  "workbench": {
+    "claims": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "NovaWriter 是浏览器写作工作台。"
+      },
+      {
+        "subject": "NovaWriter",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "NovaWriter Pro 每月 12 美元。"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "InkBot 是博客后台改写插件。"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "定价",
+        "kind": "unknown",
+        "text": "未找到 InkBot 公开定价。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "verification": "fully"
+      },
+      {
+        "subject": "NovaWriter",
+        "dimension": "定价",
+        "verification": "fully"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "产品形态",
+        "verification": "fully"
+      }
+    ]
+  },
+  "baseline": {
+    "claims": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "NovaWriter 是写作工具。"
+      },
+      {
+        "subject": "NovaWriter",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "NovaWriter 看起来是免费的。"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "产品形态",
+        "kind": "fact",
+        "text": "InkBot 能改写文章。"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "定价",
+        "kind": "fact",
+        "text": "InkBot 定价与 NovaWriter 相同。"
+      }
+    ],
+    "verify": [
+      {
+        "subject": "NovaWriter",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "NovaWriter",
+        "dimension": "定价",
+        "verification": "unrelated"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "产品形态",
+        "verification": "partial"
+      },
+      {
+        "subject": "InkBot",
+        "dimension": "定价",
+        "verification": "unrelated"
+      }
+    ]
+  }
+}

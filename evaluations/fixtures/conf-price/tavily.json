@@ -1,0 +1,34 @@
+{
+  "Atlas 定价 官方": {
+    "results": [
+      {
+        "title": "Atlas 官方定价",
+        "url": "https://example.com/atlas-price",
+        "snippet": "官方写每月 40 美元。",
+        "raw_content": "定价：Atlas Team 官方标价为每席每月 40 美元，2026 年 3 月更新。"
+      },
+      {
+        "title": "转载评测",
+        "url": "https://example.com/atlas-price-repost",
+        "snippet": "评测写每月 10 美元。",
+        "raw_content": "定价：一篇转载评测写 Atlas 入门档每月只要 10 美元，未给出日期。"
+      }
+    ]
+  },
+  "Atlas 定价": {
+    "results": [
+      {
+        "title": "Atlas 官方定价",
+        "url": "https://example.com/atlas-price",
+        "snippet": "官方写每月 40 美元。",
+        "raw_content": "定价：Atlas Team 官方标价为每席每月 40 美元，2026 年 3 月更新。"
+      },
+      {
+        "title": "转载评测",
+        "url": "https://example.com/atlas-price-repost",
+        "snippet": "评测写每月 10 美元。",
+        "raw_content": "定价：一篇转载评测写 Atlas 入门档每月只要 10 美元，未给出日期。"
+      }
+    ]
+  }
+}

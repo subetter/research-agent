@@ -1,0 +1,17 @@
+{
+  "id": "miss-empty-raw",
+  "family": "missing",
+  "question": "调查 Helio 的产品形态和部署方式",
+  "subjects": [
+    "Helio"
+  ],
+  "dimensions": [
+    "产品形态",
+    "部署方式"
+  ],
+  "baseline_query": "Helio 产品形态 部署方式",
+  "page_subjects": {
+    "https://example.com/helio": "Helio",
+    "https://example.com/helio-deploy": "Helio"
+  }
+}

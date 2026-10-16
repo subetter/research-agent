@@ -1,0 +1,48 @@
+{
+  "NovaWriter 产品形态 定价 官方": {
+    "results": [
+      {
+        "title": "NovaWriter",
+        "url": "https://example.com/novawriter",
+        "snippet": "NovaWriter 是写作工具。",
+        "raw_content": "产品形态：NovaWriter 是浏览器写作工作台。\n\n定价：NovaWriter Pro 每月 12 美元。"
+      }
+    ]
+  },
+  "InkBot 产品形态 定价 官方": {
+    "results": [
+      {
+        "title": "InkBot",
+        "url": "https://example.com/inkbot",
+        "snippet": "InkBot 能改写文章。",
+        "raw_content": "产品形态：InkBot 是嵌入博客后台的改写插件。\n\n公司只公布了形态介绍，没有公开费用页。"
+      }
+    ]
+  },
+  "NovaWriter InkBot 产品形态 定价": {
+    "results": [
+      {
+        "title": "NovaWriter",
+        "url": "https://example.com/novawriter",
+        "snippet": "NovaWriter 是写作工具。",
+        "raw_content": "产品形态：NovaWriter 是浏览器写作工作台。\n\n定价：NovaWriter Pro 每月 12 美元。"
+      },
+      {
+        "title": "InkBot",
+        "url": "https://example.com/inkbot",
+        "snippet": "InkBot 能改写文章。",
+        "raw_content": "产品形态：InkBot 是嵌入博客后台的改写插件。\n\n公司只公布了形态介绍，没有公开费用页。"
+      }
+    ]
+  },
+  "InkBot 补充 缺失维度": {
+    "results": [
+      {
+        "title": "InkBot",
+        "url": "https://example.com/inkbot",
+        "snippet": "InkBot 能改写文章。",
+        "raw_content": "产品形态：InkBot 是嵌入博客后台的改写插件。\n\n公司只公布了形态介绍，没有公开费用页。"
+      }
+    ]
+  }
+}

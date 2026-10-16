@@ -1,0 +1,58 @@
+{
+  "ChatGPT 产品形态 定价 官方": {
+    "results": [
+      {
+        "title": "ChatGPT 产品说明",
+        "url": "https://example.com/chatgpt",
+        "snippet": "ChatGPT 是对话助手。",
+        "raw_content": "产品形态：ChatGPT 是面向个人的对话式研究与写作助手，在浏览器中完成问答。\n\n定价：ChatGPT Plus 为每月 20 美元，另有免费档。"
+      }
+    ]
+  },
+  "Gemini 产品形态 定价 官方": {
+    "results": [
+      {
+        "title": "Gemini 产品说明",
+        "url": "https://example.com/gemini",
+        "snippet": "Gemini 是多模态助手。",
+        "raw_content": "产品形态：Gemini 是谷歌的多模态助手，可在搜索与文档中调用。\n\n定价：Gemini Advanced 按 Google One 高级套餐计费。"
+      }
+    ]
+  },
+  "ChatGPT Gemini 产品形态 定价": {
+    "results": [
+      {
+        "title": "ChatGPT 产品说明",
+        "url": "https://example.com/chatgpt",
+        "snippet": "ChatGPT 是对话助手。",
+        "raw_content": "产品形态：ChatGPT 是面向个人的对话式研究与写作助手，在浏览器中完成问答。\n\n定价：ChatGPT Plus 为每月 20 美元，另有免费档。"
+      },
+      {
+        "title": "Gemini 产品说明",
+        "url": "https://example.com/gemini",
+        "snippet": "Gemini 是多模态助手。",
+        "raw_content": "产品形态：Gemini 是谷歌的多模态助手，可在搜索与文档中调用。\n\n定价：Gemini Advanced 按 Google One 高级套餐计费。"
+      }
+    ]
+  },
+  "ChatGPT 补充 缺失维度": {
+    "results": [
+      {
+        "title": "ChatGPT 产品说明",
+        "url": "https://example.com/chatgpt",
+        "snippet": "ChatGPT 是对话助手。",
+        "raw_content": "产品形态：ChatGPT 是面向个人的对话式研究与写作助手，在浏览器中完成问答。\n\n定价：ChatGPT Plus 为每月 20 美元，另有免费档。"
+      }
+    ]
+  },
+  "Gemini 补充 缺失维度": {
+    "results": [
+      {
+        "title": "Gemini 产品说明",
+        "url": "https://example.com/gemini",
+        "snippet": "Gemini 是多模态助手。",
+        "raw_content": "产品形态：Gemini 是谷歌的多模态助手，可在搜索与文档中调用。\n\n定价：Gemini Advanced 按 Google One 高级套餐计费。"
+      }
+    ]
+  }
+}

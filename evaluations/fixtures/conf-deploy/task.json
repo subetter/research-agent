@@ -1,0 +1,16 @@
+{
+  "id": "conf-deploy",
+  "family": "conflict",
+  "question": "核实 Beacon 的部署方式，冲突不要合并",
+  "subjects": [
+    "Beacon"
+  ],
+  "dimensions": [
+    "部署方式"
+  ],
+  "baseline_query": "Beacon 部署方式",
+  "page_subjects": {
+    "https://example.com/beacon-deploy": "Beacon",
+    "https://example.com/beacon-blog": "Beacon"
+  }
+}

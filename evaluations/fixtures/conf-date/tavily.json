@@ -1,0 +1,34 @@
+{
+  "NovaWriter 产品形态 发布 官方": {
+    "results": [
+      {
+        "title": "新闻稿 2024",
+        "url": "https://example.com/nova-2024",
+        "snippet": "2024 年发布写作工作台。",
+        "raw_content": "产品形态：2024 年 6 月新闻稿称 NovaWriter 以浏览器写作工作台形式发布。"
+      },
+      {
+        "title": "媒体转载 2025",
+        "url": "https://example.com/nova-2025",
+        "snippet": "2025 年才上线。",
+        "raw_content": "产品形态：2025 年一篇转载称 NovaWriter 到 2025 年 1 月才正式上线写作工作台。"
+      }
+    ]
+  },
+  "NovaWriter 产品形态 发布": {
+    "results": [
+      {
+        "title": "新闻稿 2024",
+        "url": "https://example.com/nova-2024",
+        "snippet": "2024 年发布写作工作台。",
+        "raw_content": "产品形态：2024 年 6 月新闻稿称 NovaWriter 以浏览器写作工作台形式发布。"
+      },
+      {
+        "title": "媒体转载 2025",
+        "url": "https://example.com/nova-2025",
+        "snippet": "2025 年才上线。",
+        "raw_content": "产品形态：2025 年一篇转载称 NovaWriter 到 2025 年 1 月才正式上线写作工作台。"
+      }
+    ]
+  }
+}

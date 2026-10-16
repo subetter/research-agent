@@ -1,0 +1,38 @@
+{
+  "Cursor 产品形态 目标用户 官方": {
+    "results": [
+      {
+        "title": "Cursor 介绍",
+        "url": "https://example.com/cursor",
+        "snippet": "Cursor 是 AI 编辑器。",
+        "raw_content": "产品形态：Cursor 是带智能补全与 Agent 的独立代码编辑器。\n\n目标用户：主要面向职业软件工程师和独立开发者。"
+      }
+    ]
+  },
+  "Copilot 产品形态 目标用户 官方": {
+    "results": [
+      {
+        "title": "GitHub Copilot",
+        "url": "https://example.com/copilot",
+        "snippet": "Copilot 是插件。",
+        "raw_content": "产品形态：GitHub Copilot 作为 IDE 插件提供补全与聊天。\n\n目标用户：GitHub 上的开发者与企业团队。"
+      }
+    ]
+  },
+  "Cursor Copilot 产品形态 目标用户": {
+    "results": [
+      {
+        "title": "Cursor 介绍",
+        "url": "https://example.com/cursor",
+        "snippet": "Cursor 是 AI 编辑器。",
+        "raw_content": "产品形态：Cursor 是带智能补全与 Agent 的独立代码编辑器。\n\n目标用户：主要面向职业软件工程师和独立开发者。"
+      },
+      {
+        "title": "GitHub Copilot",
+        "url": "https://example.com/copilot",
+        "snippet": "Copilot 是插件。",
+        "raw_content": "产品形态：GitHub Copilot 作为 IDE 插件提供补全与聊天。\n\n目标用户：GitHub 上的开发者与企业团队。"
+      }
+    ]
+  }
+}

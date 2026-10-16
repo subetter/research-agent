@@ -1,0 +1,77 @@
+{
+  "plan": {
+    "role": "assistant",
+    "content": "{\"goal\": \"比较 ChatGPT 与 Gemini 的产品形态和定价\", \"subjects\": [\"ChatGPT\", \"Gemini\"], \"dimensions\": [\"产品形态\", \"定价\"], \"questions\": [\"收集ChatGPT的直接来源\", \"收集Gemini的直接来源\"], \"max_search_calls\": 24, \"max_gap_rounds\": 1}",
+    "_tokens": 16
+  },
+  "research-model:ChatGPT:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "ChatGPT-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"ChatGPT 产品形态 定价 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:ChatGPT:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "ChatGPT-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/chatgpt\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:ChatGPT:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  },
+  "research-model:Gemini:0:0": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Gemini-s0",
+        "type": "function",
+        "function": {
+          "name": "search_web",
+          "arguments": "{\"query\": \"Gemini 产品形态 定价 官方\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Gemini:0:1": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+      {
+        "id": "Gemini-r0",
+        "type": "function",
+        "function": {
+          "name": "read_source",
+          "arguments": "{\"url\": \"https://example.com/gemini\"}"
+        }
+      }
+    ],
+    "_tokens": 8
+  },
+  "research-model:Gemini:0:2": {
+    "role": "assistant",
+    "content": "调查完成",
+    "_tokens": 8
+  }
+}
